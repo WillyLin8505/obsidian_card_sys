@@ -12,7 +12,11 @@
       "Bash(python3 -c \"import json; print\\(''python3 OK''\\)\")",
       "Bash(git --version)",
       "Bash(chmod +x ~/.claude/hooks/auto-git-commit.sh)",
-      "Bash(python3 -m json.tool ~/.claude/settings.json)"
+      "Bash(python3 -m json.tool ~/.claude/settings.json)",
+      "Bash(ssh -T git@github.com)",
+      "Bash(gh auth:*)",
+      "Bash(git -C \"/mnt/c/Users/sssss/OneDrive/personal_desk_file/Desktop/vibe_coding_project/Card Box Note Management\" config --global credential.helper)",
+      "Bash(git config:*)"
     ]
   }
 }

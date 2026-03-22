@@ -66,8 +66,11 @@ export function PermanentNotes() {
     try {
       setLoading(true);
       const notes = await api.notes.getAll();
-      setAllNotes(notes);
-      setFilteredNotes(notes);
+      const sorted = [...notes].sort((a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
+      setAllNotes(sorted);
+      setFilteredNotes(sorted);
 
       // 收集所有標籤
       const tagsSet = new Set<string>();
