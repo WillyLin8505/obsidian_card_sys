@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router';
 import { storage } from '../utils/storage';
 import { localApi } from '../utils/api';
 import { Search, X, Loader2, Plus, Trash2 } from 'lucide-react';
-// X still used by tag filter badges
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
