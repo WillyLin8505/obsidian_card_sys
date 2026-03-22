@@ -68,16 +68,20 @@ export function AllFiles() {
   }, [notes]);
 
   const filteredNotes = useMemo(() => {
-    return notes.filter(note => {
-      const matchesSearch = searchTerm === '' ||
-        note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        note.content.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesTags = selectedTags.length === 0 ||
-        selectedTags.every(tag => note.tags?.includes(tag));
-      const matchesType = selectedTypes.length === 0 ||
-        selectedTypes.includes(note.type);
-      return matchesSearch && matchesTags && matchesType;
-    });
+    return notes
+      .filter(note => {
+        const matchesSearch = searchTerm === '' ||
+          note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          note.content.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesTags = selectedTags.length === 0 ||
+          selectedTags.every(tag => note.tags?.includes(tag));
+        const matchesType = selectedTypes.length === 0 ||
+          selectedTypes.includes(note.type);
+        return matchesSearch && matchesTags && matchesType;
+      })
+      .sort((a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
   }, [notes, searchTerm, selectedTags, selectedTypes]);
 
   const handleQmdSearch = async (query: string) => {
