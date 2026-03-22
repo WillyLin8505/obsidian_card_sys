@@ -96,6 +96,9 @@ export function PermanentNotes() {
         const noteTags = extractTags(note);
         return selectedTags.some(tag => noteTags.includes(tag));
       });
+      filtered.sort((a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
       setFilteredNotes(filtered);
     }
   }, [selectedTags, allNotes]);
