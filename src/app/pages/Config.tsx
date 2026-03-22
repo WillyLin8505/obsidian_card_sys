@@ -5,7 +5,7 @@ import { Config as ConfigType, DataSource } from '../types/note';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
-import { Save, FolderOpen, FileText, BookOpen, Lightbulb, Database, Download, CheckCircle, XCircle, AlertCircle, RefreshCw, Eye, Wifi } from 'lucide-react';
+import { Save, FolderOpen, FileText, BookOpen, Lightbulb, Database, Download, CheckCircle, XCircle, AlertCircle, RefreshCw, Eye, Wifi, Tag, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { migrateToDatabase, downloadBackup } from '../utils/migrate';
 import { DatabaseSetupInstructions } from '../components/DatabaseSetupInstructions';
