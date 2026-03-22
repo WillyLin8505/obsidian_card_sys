@@ -216,6 +216,131 @@ export function Config() {
           </div>
         </div>
 
+        {/* Default Tags Configuration */}
+        <div className="bg-white border rounded-lg p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Tag className="size-5 text-gray-600" />
+            <h2>預設 Tags 設定</h2>
+          </div>
+          <p className="text-sm text-gray-600 mb-6">設定建立新筆記時自動套用的 tags</p>
+
+          <div className="space-y-6">
+            {/* Fleet Note Tags */}
+            <div>
+              <label className="block text-sm font-medium mb-2 flex items-center gap-1">
+                <Lightbulb className="size-4 text-yellow-500" />
+                靈感筆記預設 Tags
+              </label>
+              <div className="flex flex-wrap gap-2 mb-2 min-h-[36px]">
+                {fleetNoteTags.map(tag => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm"
+                  >
+                    #{tag}
+                    <button
+                      onClick={() => setFleetNoteTags(prev => prev.filter(t => t !== tag))}
+                      className="hover:text-yellow-600 ml-1"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+                {fleetNoteTags.length === 0 && (
+                  <span className="text-sm text-gray-400">尚未設定預設 tags</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={fleetTagInput}
+                  onChange={(e) => setFleetTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && fleetTagInput.trim()) {
+                      const tag = fleetTagInput.trim();
+                      if (!fleetNoteTags.includes(tag)) {
+                        setFleetNoteTags(prev => [...prev, tag]);
+                      }
+                      setFleetTagInput('');
+                    }
+                  }}
+                  placeholder="輸入 tag 後按 Enter 新增"
+                  className="max-w-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const tag = fleetTagInput.trim();
+                    if (tag && !fleetNoteTags.includes(tag)) {
+                      setFleetNoteTags(prev => [...prev, tag]);
+                    }
+                    setFleetTagInput('');
+                  }}
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Source Note Tags */}
+            <div>
+              <label className="block text-sm font-medium mb-2 flex items-center gap-1">
+                <BookOpen className="size-4 text-blue-500" />
+                文獻筆記預設 Tags
+              </label>
+              <div className="flex flex-wrap gap-2 mb-2 min-h-[36px]">
+                {sourceNoteTags.map(tag => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+                  >
+                    #{tag}
+                    <button
+                      onClick={() => setSourceNoteTags(prev => prev.filter(t => t !== tag))}
+                      className="hover:text-blue-600 ml-1"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+                {sourceNoteTags.length === 0 && (
+                  <span className="text-sm text-gray-400">尚未設定預設 tags</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={sourceTagInput}
+                  onChange={(e) => setSourceTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && sourceTagInput.trim()) {
+                      const tag = sourceTagInput.trim();
+                      if (!sourceNoteTags.includes(tag)) {
+                        setSourceNoteTags(prev => [...prev, tag]);
+                      }
+                      setSourceTagInput('');
+                    }
+                  }}
+                  placeholder="輸入 tag 後按 Enter 新增"
+                  className="max-w-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const tag = sourceTagInput.trim();
+                    if (tag && !sourceNoteTags.includes(tag)) {
+                      setSourceNoteTags(prev => [...prev, tag]);
+                    }
+                    setSourceTagInput('');
+                  }}
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Fleet Note Template Configuration */}
         <div className="bg-white border rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -224,20 +349,6 @@ export function Config() {
           </div>
 
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm mb-2">
-                新增閃念筆記時自動加入的 Tags
-              </label>
-              <Input
-                value={fleetNoteTagsInput}
-                onChange={(e) => setFleetNoteTagsInput(e.target.value)}
-                placeholder="例如: 靈感, 待處理, inbox（用逗號分隔）"
-              />
-              <p className="text-sm text-gray-500 mt-1">
-                用逗號分隔多個 tag，建立新閃念筆記時會自動套用
-              </p>
-            </div>
-
             <div>
               <label className="block text-sm mb-2">
                 閃念筆記預設模板
