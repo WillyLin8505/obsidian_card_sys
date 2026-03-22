@@ -54,9 +54,6 @@ export function Config() {
   };
 
   const handleSave = () => {
-    const parseTags = (input: string) =>
-      input.split(',').map(t => t.trim()).filter(Boolean);
-
     const newConfig: ConfigType = {
       notePath,
       fleetNoteTemplate,
@@ -64,8 +61,8 @@ export function Config() {
       sourceNoteTemplate,
       dataSource,
       obsidianBackendUrl: obsidianBackendUrl.trim() || 'http://localhost:3001',
-      fleetNoteTags: parseTags(fleetNoteTagsInput),
-      sourceNoteTags: parseTags(sourceNoteTagsInput),
+      fleetNoteTags,
+      sourceNoteTags,
     };
 
     storage.saveConfig(newConfig);
