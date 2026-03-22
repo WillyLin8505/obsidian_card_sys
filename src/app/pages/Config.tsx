@@ -223,8 +223,22 @@ export function Config() {
             <Lightbulb className="size-5 text-gray-600" />
             <h2>閃念筆記模板</h2>
           </div>
-          
+
           <div className="space-y-4">
+            <div>
+              <label className="block text-sm mb-2">
+                新增閃念筆記時自動加入的 Tags
+              </label>
+              <Input
+                value={fleetNoteTagsInput}
+                onChange={(e) => setFleetNoteTagsInput(e.target.value)}
+                placeholder="例如: 靈感, 待處理, inbox（用逗號分隔）"
+              />
+              <p className="text-sm text-gray-500 mt-1">
+                用逗號分隔多個 tag，建立新閃念筆記時會自動套用
+              </p>
+            </div>
+
             <div>
               <label className="block text-sm mb-2">
                 閃念筆記預設模板
@@ -240,7 +254,7 @@ export function Config() {
                 閃念筆記用於快速記錄想法和靈感，這個模板會在創建閃念筆記時自動套用
               </p>
             </div>
-            
+
             <Button
               variant="outline"
               onClick={resetFleetTemplate}
