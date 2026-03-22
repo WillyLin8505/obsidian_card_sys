@@ -1,0 +1,386 @@
+-- clean up (only use this because your DB is empty)
+DROP TABLE IF EXISTS public.note_links CASCADE;
+DROP TABLE IF EXISTS public.note_tags CASCADE;
+DROP TABLE IF EXISTS public.tags CASCADE;
+DROP TABLE IF EXISTS public.note_chunks CASCADE;
+DROP TABLE IF EXISTS public.notes CASCADE;
+
+-- recreate tables with plain vector type
+CREATE TABLE IF NOT EXISTS public.notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  note_type text NOT NULL DEFAULT 'source',
+  source_type text,
+  source_url text,
+  file_path text,
+  raw_file_path text,
+  status text NOT NULL DEFAULT 'active',
+  processing_status text NOT NULL DEFAULT 'pending',
+  summary text,
+  language text,
+  content_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.note_chunks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  note_id uuid NOT NULL REFERENCES public.notes(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  chunk_index integer NOT NULL,
+  chunk_type text,
+  heading_path text,
+  content text NOT NULL,
+  token_count integer,
+  char_count integer,
+  summary text,
+  keywords jsonb NOT NULL DEFAULT '[]'::jsonb,
+  embedding vector(1536),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT note_chunks_note_id_chunk_index_key UNIQUE (note_id, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS public.tags (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT tags_user_id_name_key UNIQUE (user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS public.note_tags (
+  note_id uuid NOT NULL REFERENCES public.notes(id) ON DELETE CASCADE,
+  tag_id bigint NOT NULL REFERENCES public.tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (note_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.note_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  from_note_id uuid NOT NULL REFERENCES public.notes(id) ON DELETE CASCADE,
+  to_note_id uuid NOT NULL REFERENCES public.notes(id) ON DELETE CASCADE,
+  link_type text NOT NULL DEFAULT 'ai_suggested',
+  relation_type text,
+  score double precision,
+  status text NOT NULL DEFAULT 'suggested',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT note_links_from_to_check CHECK (from_note_id <> to_note_id)
+);
+
+-- indexes
+CREATE INDEX IF NOT EXISTS idx_notes_user_id
+  ON public.notes(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_notes_user_status_created
+  ON public.notes(user_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notes_note_type
+  ON public.notes(note_type);
+
+CREATE INDEX IF NOT EXISTS idx_notes_updated_at
+  ON public.notes(updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notes_content_hash
+  ON public.notes(content_hash);
+
+CREATE INDEX IF NOT EXISTS idx_note_chunks_note_id
+  ON public.note_chunks(note_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_chunks_user_id
+  ON public.note_chunks(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_chunks_note_chunkidx
+  ON public.note_chunks(note_id, chunk_index);
+
+CREATE INDEX IF NOT EXISTS idx_note_chunks_keywords
+  ON public.note_chunks USING gin (keywords);
+
+CREATE INDEX IF NOT EXISTS idx_tags_user_id
+  ON public.tags(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_tags_note_id
+  ON public.note_tags(note_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_tags_tag_id
+  ON public.note_tags(tag_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_links_user_id
+  ON public.note_links(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_links_from_note_id
+  ON public.note_links(from_note_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_links_to_note_id
+  ON public.note_links(to_note_id);
+
+CREATE INDEX IF NOT EXISTS idx_note_chunks_embedding_ivfflat
+  ON public.note_chunks
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
+
+-- updated_at function
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_set_updated_at_notes ON public.notes;
+CREATE TRIGGER trg_set_updated_at_notes
+BEFORE UPDATE ON public.notes
+FOR EACH ROW
+EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_set_updated_at_note_chunks ON public.note_chunks;
+CREATE TRIGGER trg_set_updated_at_note_chunks
+BEFORE UPDATE ON public.note_chunks
+FOR EACH ROW
+EXECUTE FUNCTION public.set_updated_at();
+
+-- RLS
+ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.note_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.note_tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.note_links ENABLE ROW LEVEL SECURITY;
+
+-- notes policies
+DROP POLICY IF EXISTS notes_select_own ON public.notes;
+CREATE POLICY notes_select_own
+ON public.notes
+FOR SELECT
+TO authenticated
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS notes_insert_own ON public.notes;
+CREATE POLICY notes_insert_own
+ON public.notes
+FOR INSERT
+TO authenticated
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS notes_update_own ON public.notes;
+CREATE POLICY notes_update_own
+ON public.notes
+FOR UPDATE
+TO authenticated
+USING (user_id = auth.uid())
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS notes_delete_own ON public.notes;
+CREATE POLICY notes_delete_own
+ON public.notes
+FOR DELETE
+TO authenticated
+USING (user_id = auth.uid());
+
+-- note_chunks policies
+DROP POLICY IF EXISTS note_chunks_select_own ON public.note_chunks;
+CREATE POLICY note_chunks_select_own
+ON public.note_chunks
+FOR SELECT
+TO authenticated
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS note_chunks_insert_own ON public.note_chunks;
+CREATE POLICY note_chunks_insert_own
+ON public.note_chunks
+FOR INSERT
+TO authenticated
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS note_chunks_update_own ON public.note_chunks;
+CREATE POLICY note_chunks_update_own
+ON public.note_chunks
+FOR UPDATE
+TO authenticated
+USING (user_id = auth.uid())
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS note_chunks_delete_own ON public.note_chunks;
+CREATE POLICY note_chunks_delete_own
+ON public.note_chunks
+FOR DELETE
+TO authenticated
+USING (user_id = auth.uid());
+
+-- tags policies
+DROP POLICY IF EXISTS tags_select_own ON public.tags;
+CREATE POLICY tags_select_own
+ON public.tags
+FOR SELECT
+TO authenticated
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS tags_insert_own ON public.tags;
+CREATE POLICY tags_insert_own
+ON public.tags
+FOR INSERT
+TO authenticated
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS tags_update_own ON public.tags;
+CREATE POLICY tags_update_own
+ON public.tags
+FOR UPDATE
+TO authenticated
+USING (user_id = auth.uid())
+WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS tags_delete_own ON public.tags;
+CREATE POLICY tags_delete_own
+ON public.tags
+FOR DELETE
+TO authenticated
+USING (user_id = auth.uid());
+
+-- note_tags policies
+DROP POLICY IF EXISTS note_tags_select_own ON public.note_tags;
+CREATE POLICY note_tags_select_own
+ON public.note_tags
+FOR SELECT
+TO authenticated
+USING (
+  EXISTS (
+    SELECT 1
+    FROM public.notes n
+    WHERE n.id = note_tags.note_id
+      AND n.user_id = auth.uid()
+  )
+);
+
+DROP POLICY IF EXISTS note_tags_insert_own ON public.note_tags;
+CREATE POLICY note_tags_insert_own
+ON public.note_tags
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  EXISTS (
+    SELECT 1
+    FROM public.notes n
+    WHERE n.id = note_tags.note_id
+      AND n.user_id = auth.uid()
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM public.tags t
+    WHERE t.id = note_tags.tag_id
+      AND t.user_id = auth.uid()
+  )
+);
+
+DROP POLICY IF EXISTS note_tags_delete_own ON public.note_tags;
+CREATE POLICY note_tags_delete_own
+ON public.note_tags
+FOR DELETE
+TO authenticated
+USING (
+  EXISTS (
+    SELECT 1
+    FROM public.notes n
+    WHERE n.id = note_tags.note_id
+      AND n.user_id = auth.uid()
+  )
+);
+
+-- note_links policies
+DROP POLICY IF EXISTS note_links_select_own ON public.note_links;
+CREATE POLICY note_links_select_own
+ON public.note_links
+FOR SELECT
+TO authenticated
+USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS note_links_insert_own ON public.note_links;
+CREATE POLICY note_links_insert_own
+ON public.note_links
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  user_id = auth.uid()
+  AND EXISTS (
+    SELECT 1
+    FROM public.notes n1
+    WHERE n1.id = note_links.from_note_id
+      AND n1.user_id = auth.uid()
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM public.notes n2
+    WHERE n2.id = note_links.to_note_id
+      AND n2.user_id = auth.uid()
+  )
+);
+
+DROP POLICY IF EXISTS note_links_update_own ON public.note_links;
+CREATE POLICY note_links_update_own
+ON public.note_links
+FOR UPDATE
+TO authenticated
+USING (user_id = auth.uid())
+WITH CHECK (
+  user_id = auth.uid()
+  AND EXISTS (
+    SELECT 1
+    FROM public.notes n1
+    WHERE n1.id = note_links.from_note_id
+      AND n1.user_id = auth.uid()
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM public.notes n2
+    WHERE n2.id = note_links.to_note_id
+      AND n2.user_id = auth.uid()
+  )
+);
+
+DROP POLICY IF EXISTS note_links_delete_own ON public.note_links;
+CREATE POLICY note_links_delete_own
+ON public.note_links
+FOR DELETE
+TO authenticated
+USING (user_id = auth.uid());
+
+-- semantic search function
+CREATE OR REPLACE FUNCTION public.match_note_chunks (
+  query_embedding vector(1536),
+  match_count integer DEFAULT 10
+)
+RETURNS TABLE (
+  id uuid,
+  note_id uuid,
+  chunk_index integer,
+  heading_path text,
+  content text,
+  similarity double precision
+)
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT
+    nc.id,
+    nc.note_id,
+    nc.chunk_index,
+    nc.heading_path,
+    nc.content,
+    1 - (nc.embedding <=> query_embedding) AS similarity
+  FROM public.note_chunks nc
+  WHERE nc.user_id = auth.uid()
+    AND nc.embedding IS NOT NULL
+  ORDER BY nc.embedding <=> query_embedding
+  LIMIT match_count;
+$$;
+
+ANALYZE public.notes;
+ANALYZE public.note_chunks;
+ANALYZE public.tags;
+ANALYZE public.note_tags;
+ANALYZE public.note_links;
