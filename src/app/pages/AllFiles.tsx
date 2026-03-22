@@ -116,21 +116,6 @@ export function AllFiles() {
     );
   };
 
-  const toggleType = (type: Note['type']) => {
-    setPage(0);
-    setSelectedTypes(prev =>
-      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-    );
-  };
-
-  const getTypeLabel = (type: Note['type']) => {
-    switch (type) {
-      case 'fleet': return '閃念筆記';
-      case 'source': return '文獻筆記';
-      case 'permanent': return '永久筆記';
-    }
-  };
-
   const handleNoteClick = (note: Note, event: React.MouseEvent) => {
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
