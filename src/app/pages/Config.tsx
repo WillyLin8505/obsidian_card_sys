@@ -419,20 +419,6 @@ export function Config() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm mb-2">
-                新增文獻筆記時自動加入的 Tags
-              </label>
-              <Input
-                value={sourceNoteTagsInput}
-                onChange={(e) => setSourceNoteTagsInput(e.target.value)}
-                placeholder="例如: 文獻, 閱讀, 待整理（用逗號分隔）"
-              />
-              <p className="text-sm text-gray-500 mt-1">
-                用逗號分隔多個 tag，建立新文獻筆記時會自動套用
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm mb-2">
                 文獻筆記預設模板
               </label>
               <Textarea
