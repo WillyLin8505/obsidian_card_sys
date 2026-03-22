@@ -74,14 +74,12 @@ export function AllFiles() {
           note.content.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesTags = selectedTags.length === 0 ||
           selectedTags.every(tag => note.tags?.includes(tag));
-        const matchesType = selectedTypes.length === 0 ||
-          selectedTypes.includes(note.type);
-        return matchesSearch && matchesTags && matchesType;
+        return matchesSearch && matchesTags;
       })
       .sort((a, b) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       );
-  }, [notes, searchTerm, selectedTags, selectedTypes]);
+  }, [notes, searchTerm, selectedTags]);
 
   const handleQmdSearch = async (query: string) => {
     if (!query.trim()) {
