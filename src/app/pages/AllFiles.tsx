@@ -434,7 +434,7 @@ tags:
 
           {filteredNotes.length === 0 && !loading && (
             <div className="text-center py-12 text-gray-500">
-              {searchTerm || selectedTags.length > 0 || selectedTypes.length > 0
+              {searchTerm || selectedTags.length > 0
                 ? '沒有符合條件的筆記'
                 : '尚無筆記，開始創建您的第一則筆記吧！'
               }
