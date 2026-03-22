@@ -175,13 +175,16 @@ tags:
 
     let templateContent = '';
     let noteTitle = '';
+    let defaultTags: string[] = [];
 
     if (type === 'fleet') {
       templateContent = config.fleetNoteTemplate || '';
       noteTitle = '新閃念筆記';
+      defaultTags = config.fleetNoteTags || [];
     } else if (type === 'source') {
       templateContent = config.sourceNoteTemplate || '';
       noteTitle = '新文獻筆記';
+      defaultTags = config.sourceNoteTags || [];
     } else {
       templateContent = config.permanentNoteTemplate || '';
       noteTitle = '新永久筆記';
@@ -192,7 +195,7 @@ tags:
       title: noteTitle,
       content: frontmatter + templateContent,
       type,
-      tags: [],
+      tags: defaultTags,
       links: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
