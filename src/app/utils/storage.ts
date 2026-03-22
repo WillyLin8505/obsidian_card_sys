@@ -11,6 +11,8 @@ const DEFAULT_CONFIG: Config = {
   fleetNoteTemplate: '---\ncreate date: \naliases:\ntags:\n  - 3card/筆記法/卡片盒筆記法/靈感筆記\n---\n\n# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
   permanentNoteTemplate: '---\ncreate date: \naliases:\ntags:\n  - 3card/筆記法/卡片盒筆記法/永久筆記\n---\n\n# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
   sourceNoteTemplate: '---\ncreate date: \naliases:\ntags:\n  - 3card/筆記法/卡片盒筆記法/文獻筆記\n---\n\n# 文獻筆記\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n## 個人想法\n\n',
+  fleetNoteTags: [],
+  sourceNoteTags: [],
 };
 
 function getDataSource(): DataSource {
