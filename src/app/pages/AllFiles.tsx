@@ -81,6 +81,12 @@ export function AllFiles() {
       );
   }, [notes, searchTerm, selectedTags]);
 
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && isObsidianMode) {
+      handleQmdSearch(searchTerm);
+    }
+  };
+
   const handleQmdSearch = async (query: string) => {
     if (!query.trim()) {
       setQmdResult(null);
