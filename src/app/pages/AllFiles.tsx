@@ -18,7 +18,6 @@ export function AllFiles() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedTypes, setSelectedTypes] = useState<Note['type'][]>([]);
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
