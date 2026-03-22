@@ -19,8 +19,10 @@ export function Config() {
   const [sourceNoteTemplate, setSourceNoteTemplate] = useState(config.sourceNoteTemplate);
   const [dataSource, setDataSource] = useState<DataSource>(config.dataSource || 'supabase');
   const [obsidianBackendUrl, setObsidianBackendUrl] = useState(config.obsidianBackendUrl || 'http://localhost:3001');
-  const [fleetNoteTagsInput, setFleetNoteTagsInput] = useState((config.fleetNoteTags || []).join(', '));
-  const [sourceNoteTagsInput, setSourceNoteTagsInput] = useState((config.sourceNoteTags || []).join(', '));
+  const [fleetNoteTags, setFleetNoteTags] = useState<string[]>(config.fleetNoteTags || []);
+  const [fleetTagInput, setFleetTagInput] = useState('');
+  const [sourceNoteTags, setSourceNoteTags] = useState<string[]>(config.sourceNoteTags || []);
+  const [sourceTagInput, setSourceTagInput] = useState('');
   const [isMigrating, setIsMigrating] = useState(false);
   const [dbStatus, setDbStatus] = useState<{ success: boolean; message: string; hint?: string } | null>(null);
   const [isCheckingDb, setIsCheckingDb] = useState(false);
