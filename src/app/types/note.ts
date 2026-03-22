@@ -19,4 +19,6 @@ export interface Config {
   sourceNoteTemplate: string;
   obsidianBackendUrl?: string;
   dataSource: DataSource;
+  fleetNoteTags: string[];
+  sourceNoteTags: string[];
 }
