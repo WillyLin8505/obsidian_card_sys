@@ -356,24 +356,6 @@ tags:
       {/* Filters — hidden in obsidian mode when showing results */}
       {!(isObsidianMode && qmdResult) && (
         <>
-          {/* Type Filter */}
-          <div className="mb-6">
-            <h3 className="mb-3">筆記類型</h3>
-            <div className="flex flex-wrap gap-2">
-              {(['fleet', 'source', 'permanent'] as Note['type'][]).map(type => (
-                <Badge
-                  key={type}
-                  variant={selectedTypes.includes(type) ? 'default' : 'outline'}
-                  className="cursor-pointer"
-                  onClick={() => toggleType(type)}
-                >
-                  {getTypeLabel(type)}
-                  {selectedTypes.includes(type) && <X className="ml-1 size-3" />}
-                </Badge>
-              ))}
-            </div>
-          </div>
-
           {/* Tags Filter */}
           {allTags.length > 0 && (
             <div className="mb-6">
