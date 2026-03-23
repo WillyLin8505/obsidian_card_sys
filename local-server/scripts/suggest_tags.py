@@ -2,16 +2,39 @@
 """
 AI tag suggestion script.
 Reads JSON from stdin: { "query": str, "availableTags": [str] }
-Outputs JSON to stdout: { "suggestedTags": [str] }
+Outputs JSON to stdout: { "suggestedTags": [str] } on success,
+                        { "suggestedTags": [], "error": str } on failure.
 Calls `claude -p` CLI to generate suggestions.
 """
 
+import os
 import sys
 import json
 import subprocess
 import re
+import shutil
 
-def suggest_tags(query: str, available_tags: list[str]) -> list[str]:
+
+def get_claude_path() -> str:
+    # 1. Check environment variable override
+    env_path = os.environ.get('CLAUDE_BIN')
+    if env_path:
+        return env_path
+    # 2. Look for `claude` on PATH
+    path = shutil.which('claude')
+    if path:
+        return path
+    # 3. Common fallback for this project's development environment
+    fallback = '/home/willylin/.npm-global/bin/claude'
+    import os.path
+    if os.path.exists(fallback):
+        return fallback
+    raise RuntimeError(
+        "claude CLI not found. Install it or set CLAUDE_BIN environment variable."
+    )
+
+
+def suggest_tags(query: str, available_tags: list) -> list:
     if not available_tags:
         return []
 
@@ -26,7 +49,7 @@ def suggest_tags(query: str, available_tags: list[str]) -> list[str]:
     )
 
     result = subprocess.run(
-        ['/home/willylin/.npm-global/bin/claude', '-p', prompt, '--output-format', 'text'],
+        [get_claude_path(), '-p', prompt, '--output-format', 'text'],
         capture_output=True,
         text=True,
         timeout=30
@@ -37,27 +60,42 @@ def suggest_tags(query: str, available_tags: list[str]) -> list[str]:
 
     raw = result.stdout.strip()
 
-    # Extract JSON array from response
+    # Extract JSON array from response (handles prose around the array)
     match = re.search(r'\[.*?\]', raw, re.DOTALL)
     if not match:
         return []
 
-    parsed = json.loads(match.group())
-    # Only return tags that exist in availableTags
+    try:
+        parsed = json.loads(match.group())
+    except json.JSONDecodeError:
+        return []
+
+    # Only return tags that exist in availableTags, max 5
     return [t for t in parsed if t in available_tags][:5]
 
 
 def main():
-    data = json.load(sys.stdin)
-    query = data.get('query', '').strip()
-    available_tags = data.get('availableTags', [])
+    try:
+        data = json.load(sys.stdin)
+        query = data.get('query', '')
+        if not isinstance(query, str):
+            query = ''
+        query = query.strip()
 
-    if not query:
-        print(json.dumps({'suggestedTags': [], 'error': 'query is required'}))
+        available_tags = data.get('availableTags', [])
+        if not isinstance(available_tags, list):
+            available_tags = []
+
+        if not query:
+            print(json.dumps({'suggestedTags': [], 'error': 'query is required'}))
+            sys.exit(1)
+
+        suggested = suggest_tags(query, available_tags)
+        print(json.dumps({'suggestedTags': suggested}))
+
+    except Exception as e:
+        print(json.dumps({'suggestedTags': [], 'error': str(e)}))
         sys.exit(1)
-
-    suggested = suggest_tags(query, available_tags)
-    print(json.dumps({'suggestedTags': suggested}))
 
 
 if __name__ == '__main__':
