@@ -3,6 +3,7 @@ import cors from 'cors';
 import healthRouter from './routes/health.js';
 import searchRouter from './routes/search.js';
 import notesRouter from './routes/notes.js';
+import suggestTagsRouter from './routes/suggest-tags.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use('/health', healthRouter);
 app.use('/search', searchRouter);
 app.use('/notes', notesRouter);
+app.use('/suggest-tags', suggestTagsRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
