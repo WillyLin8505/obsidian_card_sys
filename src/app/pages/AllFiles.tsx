@@ -314,20 +314,18 @@ tags:
               className="pl-10"
             />
           </div>
-          {!isObsidianMode && (
-            <Button
-              variant="outline"
-              onClick={handleSuggestTags}
-              disabled={!searchTerm.trim() || allTags.length === 0 || isSuggestingTags}
-              className="flex items-center gap-2 whitespace-nowrap"
-            >
-              {isSuggestingTags
-                ? <Loader2 className="size-4 animate-spin" />
-                : <Sparkles className="size-4" />
-              }
-              AI 建議標籤
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            onClick={handleSuggestTags}
+            disabled={!searchTerm.trim() || allTags.length === 0 || isSuggestingTags}
+            className="flex items-center gap-2 whitespace-nowrap"
+          >
+            {isSuggestingTags
+              ? <Loader2 className="size-4 animate-spin" />
+              : <Sparkles className="size-4" />
+            }
+            AI 建議標籤
+          </Button>
         </div>
 
         {/* AI 建議 chips */}

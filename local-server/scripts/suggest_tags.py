@@ -26,7 +26,6 @@ def get_claude_path() -> str:
         return path
     # 3. Common fallback for this project's development environment
     fallback = '/home/willylin/.npm-global/bin/claude'
-    import os.path
     if os.path.exists(fallback):
         return fallback
     raise RuntimeError(
