@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { storage } from '../utils/storage';
 import { localApi } from '../utils/api';
-import { Search, X, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Search, X, Loader2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -26,6 +26,9 @@ export function AllFiles() {
   // QMD search state (obsidian mode)
   const [qmdResult, setQmdResult] = useState<AISearchResult | null>(null);
   const [qmdLoading, setQmdLoading] = useState(false);
+
+  const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+  const [isSuggestingTags, setIsSuggestingTags] = useState(false);
 
   // Pagination
   const PAGE_SIZE = 100;
@@ -103,10 +106,27 @@ export function AllFiles() {
     }
   };
 
+  const handleSuggestTags = async () => {
+    if (!searchTerm.trim() || allTags.length === 0) return;
+    setIsSuggestingTags(true);
+    try {
+      const suggestions = await localApi.suggestTags(searchTerm, allTags);
+      setSuggestedTags(suggestions);
+      if (suggestions.length === 0) toast.info('找不到相關標籤');
+    } catch (err: any) {
+      toast.error(`AI 建議失敗: ${err.message}`);
+    } finally {
+      setIsSuggestingTags(false);
+    }
+  };
+
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
     setPage(0);
-    if (!value.trim()) setQmdResult(null);
+    if (!value.trim()) {
+      setQmdResult(null);
+      setSuggestedTags([]);
+    }
   };
 
   const toggleTag = (tag: string) => {
@@ -279,20 +299,57 @@ tags:
 
       {/* Search Bar */}
       <div className="mb-6">
-        <div className="relative">
-          {qmdLoading
-            ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-blue-400 animate-spin" />
-            : <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-gray-400" />
-          }
-          <Input
-            type="text"
-            placeholder={isObsidianMode ? '向 Obsidian 筆記庫提問，按 Enter 搜尋...' : '搜尋筆記標題或內容...'}
-            value={searchTerm}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            className="pl-10"
-          />
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            {qmdLoading
+              ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-blue-400 animate-spin" />
+              : <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-gray-400" />
+            }
+            <Input
+              type="text"
+              placeholder={isObsidianMode ? '向 Obsidian 筆記庫提問，按 Enter 搜尋...' : '搜尋筆記標題或內容...'}
+              value={searchTerm}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              className="pl-10"
+            />
+          </div>
+          {!isObsidianMode && (
+            <Button
+              variant="outline"
+              onClick={handleSuggestTags}
+              disabled={!searchTerm.trim() || allTags.length === 0 || isSuggestingTags}
+              className="flex items-center gap-2 whitespace-nowrap"
+            >
+              {isSuggestingTags
+                ? <Loader2 className="size-4 animate-spin" />
+                : <Sparkles className="size-4" />
+              }
+              AI 建議標籤
+            </Button>
+          )}
         </div>
+
+        {/* AI 建議 chips */}
+        {suggestedTags.length > 0 && (
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-500">AI 建議：</span>
+            {suggestedTags.map(tag => (
+              <button
+                key={tag}
+                onClick={() => toggleTag(tag)}
+                className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm transition-colors ${
+                  selectedTags.includes(tag)
+                    ? 'bg-amber-300 text-amber-900'
+                    : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                }`}
+              >
+                #{tag}
+                {selectedTags.includes(tag) && <span className="text-xs">✓</span>}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* QMD Search Results (obsidian mode) */}
