@@ -69,6 +69,21 @@ export const localApi = {
     }
     return response.json();
   },
+
+  suggestTags: async (query: string, availableTags: string[]): Promise<string[]> => {
+    const baseUrl = getObsidianBackendUrl();
+    const response = await fetch(`${baseUrl}/suggest-tags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, availableTags }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(err.error || 'Tag suggestion failed');
+    }
+    const { suggestedTags } = await response.json();
+    return suggestedTags as string[];
+  },
 };
 
 const API_BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-fc3187a2`;
