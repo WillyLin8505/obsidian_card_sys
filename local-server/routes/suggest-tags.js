@@ -19,10 +19,13 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    console.log('[suggest-tags] query:', query.trim());
+    console.log('[suggest-tags] availableTags count:', availableTags.length, availableTags.slice(0, 10));
     const result = await runPythonScript('suggest_tags.py', {
       query: query.trim(),
       availableTags,
     });
+    console.log('[suggest-tags] result:', result);
     res.json({ suggestedTags: result.suggestedTags || [] });
   } catch (err) {
     console.error('[suggest-tags] Error:', err.message);

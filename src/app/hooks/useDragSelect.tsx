@@ -20,30 +20,24 @@ export function useDragSelect(containerRef: React.RefObject<HTMLElement>) {
   const isMouseDown = useRef(false);
   const hasMoved = useRef(false); // 追蹤是否有真正移動過
   const clickTarget = useRef<HTMLElement | null>(null); // 記錄點擊目標
+  const wasDragging = useRef(false); // 剛結束拖曳，用來阻擋後續的 click 事件
 
   const DRAG_THRESHOLD = 5; // 最小拖曳距離（像素）
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) {
-      console.log('❌ Container not found');
       return;
     }
 
-    console.log('✅ DragSelect hook initialized');
-
     const handleMouseDown = (e: MouseEvent) => {
-      console.log('🖱️ MouseDown:', {
-        button: e.button,
-        clientX: e.clientX,
-        clientY: e.clientY,
-        targetTagName: (e.target as HTMLElement).tagName,
-        targetClassName: (e.target as HTMLElement).className
-      });
-
       // 只在左鍵點擊時開始
       if (e.button !== 0) {
-        console.log('⏭️ Not left button, ignoring');
+        return;
+      }
+
+      // Ctrl/Meta+click 讓原生事件通過，不攔截
+      if (e.ctrlKey || e.metaKey) {
         return;
       }
       
@@ -51,14 +45,12 @@ export function useDragSelect(containerRef: React.RefObject<HTMLElement>) {
 
       // 檢查是否點擊在按鈕、輸入框等互動元素上
       if (target.closest('button, input, textarea, a, select')) {
-        console.log('⏭️ Clicked on interactive element, ignoring');
         return;
       }
 
       const x = e.clientX;
       const y = e.clientY;
 
-      console.log('🎯 Preparing for possible drag at:', { x, y });
       isMouseDown.current = true;
       hasMoved.current = false; // 重置移動標誌
       startPos.current = { x, y };
@@ -75,13 +67,6 @@ export function useDragSelect(containerRef: React.RefObject<HTMLElement>) {
 
       // 阻止文字選取
       e.preventDefault();
-
-      console.log('📍 Mouse moving:', {
-        currentX: e.clientX,
-        currentY: e.clientY,
-        startX: startPos.current.x,
-        startY: startPos.current.y
-      });
 
       const dx = Math.abs(e.clientX - startPos.current.x);
       const dy = Math.abs(e.clientY - startPos.current.y);
@@ -111,20 +96,20 @@ export function useDragSelect(containerRef: React.RefObject<HTMLElement>) {
 
     const handleMouseUp = () => {
       if (isMouseDown.current) {
-        console.log('✋ Mouse up:', {
-          hasMoved: hasMoved.current,
-          clickTarget: clickTarget.current?.className
-        });
-
         // 如果沒有移動（純點擊），並且點擊的不是卡片相關元素
         if (!hasMoved.current && clickTarget.current) {
           const clickedCard = clickTarget.current.closest('[data-note-card], .note-card, [class*="Note"], [class*="Card"]');
           if (!clickedCard) {
-            console.log('🧹 Clicked empty area, should clear selection');
             setShouldClearSelection(true);
             // 重置標記，以便下次能再次觸發
             setTimeout(() => setShouldClearSelection(false), 100);
           }
+        }
+
+        // 如果有真正拖曳過，標記一下讓 click handler 可以忽略接下來的 click 事件
+        if (hasMoved.current) {
+          wasDragging.current = true;
+          setTimeout(() => { wasDragging.current = false; }, 100);
         }
 
         isMouseDown.current = false;
@@ -198,6 +183,7 @@ export function useDragSelect(containerRef: React.RefObject<HTMLElement>) {
     selectionBox,
     isInSelectionBox,
     getSelectionBoxStyle,
-    shouldClearSelection, // 新增：通知頁面是否應該清除選取
+    shouldClearSelection,
+    wasDragging,
   };
 }

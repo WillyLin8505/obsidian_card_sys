@@ -12,11 +12,11 @@ const SCRIPTS_DIR = join(__dirname, '..', 'scripts');
  * @param {number} timeoutMs - 超時毫秒數，預設 30000
  * @returns {Promise<object>} 腳本 stdout 解析後的 JSON
  */
-export async function runPythonScript(scriptName, inputData, timeoutMs = 30000) {
+export async function runPythonScript(scriptName, inputData, timeoutMs = 30000, pythonBin = 'python3') {
   const scriptPath = join(SCRIPTS_DIR, scriptName);
 
   return new Promise((resolve, reject) => {
-    const py = spawn('python3', [scriptPath]);
+    const py = spawn(pythonBin, [scriptPath]);
 
     let stdout = '';
     let stderr = '';

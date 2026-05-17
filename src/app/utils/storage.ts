@@ -1,19 +1,91 @@
-import { Note, Config, DataSource } from '../types/note';
+import { Note, Config, NoteTemplateConfig, MetadataField, DataSource, CardFontSizes } from '../types/note';
 import { api, localApi } from './api';
 
 const NOTES_KEY = 'zettelkasten_notes';
 const CONFIG_KEY = 'zettelkasten_config';
+const RECENTLY_OPENED_KEY = 'zettelkasten_recently_opened';
+
+const DEFAULT_CARD_FONT_SIZES: CardFontSizes = {
+  title: 18,
+  h1: 16,
+  h2: 14,
+  h3: 13,
+  h4: 12,
+  body: 12,
+  metadata: 11,
+};
 
 const DEFAULT_CONFIG: Config = {
   notePath: '~/Documents/Notes',
+  sourceNoteSavePath: '',
   dataSource: 'supabase',
   obsidianBackendUrl: 'http://localhost:3001',
-  fleetNoteTemplate: '---\ncreate date: \naliases:\ntags:\n  - 3card/筆記法/卡片盒筆記法/靈感筆記\n---\n\n# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
-  permanentNoteTemplate: '---\ncreate date: \naliases:\ntags:\n  - 3card/筆記法/卡片盒筆記法/永久筆記\n---\n\n# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
-  sourceNoteTemplate: '---\ncreate date: \naliases:\ntags:\n  - 3card/筆記法/卡片盒筆記法/文獻筆記\n---\n\n# 文獻筆記\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n## 個人想法\n\n',
+  allowExternalAnalysis: false,
+  fleetNoteTemplate: {
+    metadataFields: [
+      { key: 'create date', defaultValue: '' },
+      { key: 'aliases', defaultValue: '' },
+      { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/靈感筆記' },
+    ],
+    bodyTemplate: '# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
+  },
+  permanentNoteTemplate: {
+    metadataFields: [
+      { key: 'create date', defaultValue: '' },
+      { key: 'aliases', defaultValue: '' },
+      { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/永久筆記' },
+    ],
+    bodyTemplate: '# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
+  },
+  sourceNoteTemplate: {
+    metadataFields: [
+      { key: 'create date', defaultValue: '' },
+      { key: 'aliases', defaultValue: '' },
+      { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/文獻筆記' },
+    ],
+    bodyTemplate: '# 文獻筆記\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n',
+  },
   fleetNoteTags: [],
   sourceNoteTags: [],
+  displayMetadataKeys: [],
+  fontSize: 12,
+  cardFontSizes: DEFAULT_CARD_FONT_SIZES,
 };
+
+function migrateTemplate(value: unknown): NoteTemplateConfig {
+  if (typeof value === 'object' && value !== null && 'metadataFields' in value) {
+    return value as NoteTemplateConfig;
+  }
+  if (typeof value !== 'string') {
+    return { metadataFields: [], bodyTemplate: '' };
+  }
+  // Parse frontmatter from legacy string
+  const fmMatch = value.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!fmMatch) {
+    return { metadataFields: [], bodyTemplate: value };
+  }
+  const fmLines = fmMatch[1].split('\n');
+  const body = fmMatch[2].replace(/^\n/, '');
+  const fields: MetadataField[] = [];
+  let i = 0;
+  while (i < fmLines.length) {
+    const line = fmLines[i];
+    const kv = line.match(/^([^:]+):\s*(.*)$/);
+    if (!kv) { i++; continue; }
+    const key = kv[1].trim();
+    let val = kv[2].trim();
+    // Collect indented list items (e.g. tags)
+    const listItems: string[] = [];
+    while (i + 1 < fmLines.length && fmLines[i + 1].startsWith('  - ')) {
+      listItems.push(fmLines[i + 1].replace(/^\s+-\s*/, '').trim());
+      i++;
+    }
+    if (listItems.length > 0) val = listItems.join(',');
+    fields.push({ key, defaultValue: val });
+    i++;
+  }
+  return { metadataFields: fields, bodyTemplate: body };
+}
 
 function getDataSource(): DataSource {
   try {
@@ -74,10 +146,28 @@ export const storage = {
       }
     }
 
-    const notes = await storage.getNotes();
-    notes.push(note);
-    storage.saveNotes(notes);
-    return note;
+    if (source === 'obsidian') {
+      try {
+        const config = storage.getConfig();
+        const vaultPath = config.notePath || '';
+        if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
+        const safeTitle = (note.title || 'new-note').replace(/[/\\?%*:|"<>]/g, '-');
+        const filename = `${safeTitle}-${Date.now()}.md`;
+        const relativePath = await localApi.createNote(vaultPath, filename, note.content);
+        return { ...note, id: relativePath };
+      } catch (error) {
+        console.error('Error creating note in Obsidian vault:', error);
+        throw error;
+      }
+    }
+
+    // local mode
+    const rawNotes = localStorage.getItem(NOTES_KEY);
+    const allNotes: Note[] = rawNotes ? JSON.parse(rawNotes) : [];
+    const noteWithId: Note = { ...note, id: note.id || crypto.randomUUID() };
+    allNotes.push(noteWithId);
+    localStorage.setItem(NOTES_KEY, JSON.stringify(allNotes));
+    return noteWithId;
   },
 
   updateNote: async (id: string, updates: Partial<Note>): Promise<void> => {
@@ -104,12 +194,8 @@ export const storage = {
     const source = getDataSource();
 
     if (source === 'supabase') {
-      try {
-        await api.notes.delete(id);
-        return;
-      } catch (error) {
-        console.error('Error deleting note via Supabase:', error);
-      }
+      await api.notes.delete(id);
+      return;
     }
 
     const notes = await storage.getNotes();
@@ -136,12 +222,43 @@ export const storage = {
   getConfig: (): Config => {
     const raw = localStorage.getItem(CONFIG_KEY);
     if (!raw) return { ...DEFAULT_CONFIG };
-    const saved = JSON.parse(raw) as Partial<Config>;
-    return { ...DEFAULT_CONFIG, ...saved };
+    const saved = JSON.parse(raw) as Record<string, unknown>;
+    if ('claudeApiKey' in saved) {
+      delete saved.claudeApiKey;
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(saved));
+    }
+    return {
+      ...DEFAULT_CONFIG,
+      ...(saved as Partial<Config>),
+      cardFontSizes: { ...DEFAULT_CARD_FONT_SIZES, ...((saved.cardFontSizes as Partial<CardFontSizes>) || {}) },
+      fleetNoteTemplate: migrateTemplate(saved.fleetNoteTemplate ?? DEFAULT_CONFIG.fleetNoteTemplate),
+      permanentNoteTemplate: migrateTemplate(saved.permanentNoteTemplate ?? DEFAULT_CONFIG.permanentNoteTemplate),
+      sourceNoteTemplate: migrateTemplate(saved.sourceNoteTemplate ?? DEFAULT_CONFIG.sourceNoteTemplate),
+    };
   },
 
   saveConfig: (config: Config): void => {
     localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  },
+
+  // Recently opened tracking
+  recordOpened: (noteId: string): void => {
+    try {
+      const raw = localStorage.getItem(RECENTLY_OPENED_KEY);
+      const data: Record<string, number> = raw ? JSON.parse(raw) : {};
+      data[noteId] = Date.now();
+      const entries = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 500);
+      localStorage.setItem(RECENTLY_OPENED_KEY, JSON.stringify(Object.fromEntries(entries)));
+    } catch {}
+  },
+
+  getRecentlyOpenedMap: (): Record<string, number> => {
+    try {
+      const raw = localStorage.getItem(RECENTLY_OPENED_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
   },
 
   // Link operations
@@ -192,3 +309,14 @@ export const storage = {
     }
   },
 };
+
+export function sortByRecentActivity(notes: Note[]): Note[] {
+  const openedMap = storage.getRecentlyOpenedMap();
+  return [...notes].sort((a, b) => {
+    const aBase = new Date(a.updatedAt).getTime() || new Date(a.createdAt).getTime() || 0;
+    const bBase = new Date(b.updatedAt).getTime() || new Date(b.createdAt).getTime() || 0;
+    const aTime = Math.max(aBase, openedMap[a.id] || 0);
+    const bTime = Math.max(bBase, openedMap[b.id] || 0);
+    return bTime - aTime;
+  });
+}

@@ -3,8 +3,9 @@ import { Note } from '../types/note';
 import { AISearchRequest, AISearchResponse, AISearchResult } from '../types/ai-search';
 import { KnowledgeDiscoveryRequest, KnowledgeDiscoveryResult } from '../types/knowledge-discovery';
 
+const CONFIG_KEY = 'zettelkasten_config';
+
 function getObsidianBackendUrl(): string {
-  const CONFIG_KEY = 'zettelkasten_config';
   try {
     const raw = localStorage.getItem(CONFIG_KEY);
     const config = raw ? JSON.parse(raw) : {};
@@ -14,75 +15,192 @@ function getObsidianBackendUrl(): string {
   }
 }
 
+function getLocalServerToken(): string {
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY);
+    const config = raw ? JSON.parse(raw) : {};
+    return config.localServerToken || '';
+  } catch {
+    return '';
+  }
+}
+
+function allowsExternalAnalysis(): boolean {
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY);
+    const config = raw ? JSON.parse(raw) : {};
+    return config.allowExternalAnalysis === true;
+  } catch {
+    return false;
+  }
+}
+
+function requireExternalAnalysis(): void {
+  if (!allowsExternalAnalysis()) {
+    throw new Error('請先到設定頁啟用「允許外部網址/AI 分析」。');
+  }
+}
+
+function localHeaders(extra?: HeadersInit): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (extra) {
+    if (extra instanceof Headers) {
+      extra.forEach((value, key) => { headers[key] = value; });
+    } else if (Array.isArray(extra)) {
+      extra.forEach(([key, value]) => { headers[key] = value; });
+    } else {
+      Object.assign(headers, extra);
+    }
+  }
+  const token = getLocalServerToken();
+  if (token) headers['x-local-server-token'] = token;
+  return headers;
+}
+
+async function fetchLocal(url: string, options?: RequestInit, fallback = 'Request failed'): Promise<Response> {
+  const response = await fetch(url, {
+    ...options,
+    headers: localHeaders(options?.headers),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(err.error || fallback);
+  }
+  return response;
+}
+
 export const localApi = {
   health: async (): Promise<{ ok: boolean; qmd: { ok: boolean; message: string }; claude: { ok: boolean; message: string } }> => {
-    const baseUrl = getObsidianBackendUrl();
-    const response = await fetch(`${baseUrl}/health`);
+    const response = await fetch(`${getObsidianBackendUrl()}/health`, { headers: localHeaders() });
     if (!response.ok) throw new Error(`Health check failed: ${response.status}`);
     return response.json();
   },
 
-  getNotes: async (vaultPath: string): Promise<Note[]> => {
-    const baseUrl = getObsidianBackendUrl();
-    const response = await fetch(`${baseUrl}/notes?path=${encodeURIComponent(vaultPath)}`);
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(err.error || 'Failed to load local notes');
-    }
+  getNotes: async (vaultPath: string, options?: { summary?: boolean }): Promise<Note[]> => {
+    const params = new URLSearchParams({ path: vaultPath });
+    if (options?.summary) params.set('summary', '1');
+    const response = await fetchLocal(
+      `${getObsidianBackendUrl()}/notes?${params}`,
+      undefined,
+      'Failed to load local notes'
+    );
+    return response.json();
+  },
+
+  reloadNotes: async (vaultPath: string, options?: { summary?: boolean }): Promise<Note[]> => {
+    const params = new URLSearchParams({ path: vaultPath });
+    if (options?.summary) params.set('summary', '1');
+    const response = await fetchLocal(
+      `${getObsidianBackendUrl()}/notes/reload?${params}`,
+      { method: 'POST' },
+      'Failed to reload notes'
+    );
     return response.json();
   },
 
   getNoteByPath: async (relativePath: string, vaultPath: string): Promise<import('../types/note').Note> => {
-    const baseUrl = getObsidianBackendUrl();
     const params = new URLSearchParams({ vault: vaultPath, file: relativePath });
-    const response = await fetch(`${baseUrl}/notes/file?${params}`);
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(err.error || 'Failed to load note');
-    }
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/notes/file?${params}`, undefined, 'Failed to load note');
     return response.json();
+  },
+
+  assetUrl: (vaultPath: string, file: string, from?: string): string => {
+    const params = new URLSearchParams({ vault: vaultPath, file });
+    if (from) params.set('from', from);
+    const token = getLocalServerToken();
+    if (token) params.set('token', token);
+    return `${getObsidianBackendUrl()}/notes/asset?${params}`;
   },
 
   updateNote: async (relativePath: string, vaultPath: string, content: string): Promise<void> => {
-    const baseUrl = getObsidianBackendUrl();
-    const response = await fetch(`${baseUrl}/notes`, {
+    await fetchLocal(`${getObsidianBackendUrl()}/notes`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ relativePath, vaultPath, content }),
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(err.error || 'Failed to save note');
-    }
+    }, 'Failed to save note');
   },
 
   search: async (question: string): Promise<AISearchResult> => {
-    const baseUrl = getObsidianBackendUrl();
-    const response = await fetch(`${baseUrl}/search`, {
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(err.error || 'Local search failed');
-    }
+    }, 'Local search failed');
     return response.json();
   },
 
+  expandQuery: async (query: string): Promise<string[]> => {
+    requireExternalAnalysis();
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/expand-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    }, 'Query expansion failed');
+    const { keywords } = await response.json();
+    return keywords as string[];
+  },
+
   suggestTags: async (query: string, availableTags: string[]): Promise<string[]> => {
-    const baseUrl = getObsidianBackendUrl();
-    const response = await fetch(`${baseUrl}/suggest-tags`, {
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/suggest-tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, availableTags }),
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(err.error || 'Tag suggestion failed');
-    }
+    }, 'Tag suggestion failed');
     const { suggestedTags } = await response.json();
     return suggestedTags as string[];
+  },
+
+  generateLinkedNotes: async (
+    notes: Array<{ title: string; content: string }>,
+    models: string[]
+  ): Promise<Array<{ model: string; title: string; content: string }>> => {
+    requireExternalAnalysis();
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/generate-linked-notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes, models }),
+    }, 'Note generation failed');
+    const { generatedNotes } = await response.json();
+    return generatedNotes as Array<{ model: string; title: string; content: string }>;
+  },
+
+  enrichNote: async (relativePath: string, vaultPath: string): Promise<void> => {
+    requireExternalAnalysis();
+    await fetchLocal(`${getObsidianBackendUrl()}/enrich-note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ relativePath, vaultPath }),
+    }, 'Enrich failed');
+  },
+
+  enrichVault: async (vaultPath: string): Promise<void> => {
+    requireExternalAnalysis();
+    await fetchLocal(`${getObsidianBackendUrl()}/enrich-vault`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vaultPath }),
+    }, 'Vault enrich failed');
+  },
+
+  fetchUrl: async (url: string, templateBody?: string): Promise<{ title: string; content: string }> => {
+    requireExternalAnalysis();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/fetch-url`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url, templateBody }),
+    }, '抓取網址失敗');
+    return response.json();
+  },
+
+  createNote: async (vaultPath: string, filename: string, content: string): Promise<string> => {
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vaultPath, filename, content }),
+    }, 'Failed to create note');
+    const { relativePath } = await response.json();
+    return relativePath as string;
   },
 };
 
@@ -121,7 +239,7 @@ export const api = {
     },
 
     getById: async (id: string): Promise<Note> => {
-      const response = await fetch(`${API_BASE_URL}/notes/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/notes/${encodeURIComponent(id)}`, {
         headers,
       });
       
@@ -151,7 +269,7 @@ export const api = {
     },
 
     update: async (id: string, updates: Partial<Note>): Promise<Note> => {
-      const response = await fetch(`${API_BASE_URL}/notes/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/notes/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(updates),
@@ -167,7 +285,7 @@ export const api = {
     },
 
     delete: async (id: string): Promise<void> => {
-      const response = await fetch(`${API_BASE_URL}/notes/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/notes/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers,
       });

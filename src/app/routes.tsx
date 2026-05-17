@@ -1,14 +1,16 @@
+import { lazy } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router';
 import { Layout } from './components/Layout';
-import { AllFiles } from './pages/AllFiles';
-import { NoteView } from './pages/NoteView';
-import { PermanentNotes } from './pages/PermanentNotes';
-import { SourceNotes } from './pages/SourceNotes';
-import { Config } from './pages/Config';
-import { DatabaseMigration } from './pages/DatabaseMigration';
-import { DiagnosticTest } from './pages/DiagnosticTest';
-import { DataCheck } from './pages/DataCheck';
-import { ObsidianNoteView } from './pages/ObsidianNoteView';
+
+const AllFiles = lazy(() => import('./pages/AllFiles').then(module => ({ default: module.AllFiles })));
+const NoteView = lazy(() => import('./pages/NoteView').then(module => ({ default: module.NoteView })));
+const PermanentNotes = lazy(() => import('./pages/PermanentNotes').then(module => ({ default: module.PermanentNotes })));
+const SourceNotes = lazy(() => import('./pages/SourceNotes').then(module => ({ default: module.SourceNotes })));
+const Config = lazy(() => import('./pages/Config').then(module => ({ default: module.Config })));
+const DatabaseMigration = lazy(() => import('./pages/DatabaseMigration').then(module => ({ default: module.DatabaseMigration })));
+const DiagnosticTest = lazy(() => import('./pages/DiagnosticTest').then(module => ({ default: module.DiagnosticTest })));
+const DataCheck = lazy(() => import('./pages/DataCheck').then(module => ({ default: module.DataCheck })));
+const ObsidianNoteView = lazy(() => import('./pages/ObsidianNoteView').then(module => ({ default: module.ObsidianNoteView })));
 
 export const router = createBrowserRouter([
   {

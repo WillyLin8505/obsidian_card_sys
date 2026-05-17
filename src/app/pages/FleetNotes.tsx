@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { storage } from '../utils/storage';
+import { storage, sortByRecentActivity } from '../utils/storage';
 import { Note } from '../types/note';
 import { NoteCard } from '../components/NoteCard';
 import { Plus } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
+import { buildNoteContent } from '../utils/buildNoteContent';
 
 export function FleetNotes() {
   const navigate = useNavigate();
@@ -21,9 +22,7 @@ export function FleetNotes() {
       setLoading(true);
       const allNotes = await storage.getNotes();
       const fleetNotes = allNotes.filter(n => n.type === 'fleet');
-      setNotes(fleetNotes.sort((a, b) => 
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      ));
+      setNotes(sortByRecentActivity(fleetNotes));
     } catch (error) {
       console.error('Error loading fleet notes:', error);
     } finally {
@@ -33,23 +32,13 @@ export function FleetNotes() {
 
   const createNewNote = async () => {
     const config = storage.getConfig();
-    const currentDate = new Date().toISOString().split('T')[0];
-    
-    // 建立帶有 frontmatter 的模板
-    const frontmatter = `---
-create date: ${currentDate}
-aliases:
-tags:
----
 
-`;
-    
     const newNote: Note = {
-      id: '', // Temporary ID, will be replaced by server
+      id: '',
       title: '新閃念筆記',
-      content: frontmatter + (config.fleetNoteTemplate || config.templateContent || ''),
+      content: buildNoteContent(config.fleetNoteTemplate),
       type: 'fleet',
-      tags: [],
+      tags: config.fleetNoteTags || [],
       links: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -88,7 +77,13 @@ tags:
               <NoteCard
                 key={note.id}
                 note={note}
-                onClick={() => navigate(`/fleet-notes/${note.id}`)}
+                onClick={(e) => {
+                  if (e?.ctrlKey || e?.metaKey) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                  navigate(`/fleet-notes/${note.id}`);
+                }}
                 onLinkClick={() => navigate('/permanent-notes', { state: { linkingNoteId: note.id } })}
               />
             ))}

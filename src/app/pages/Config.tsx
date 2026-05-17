@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { storage } from '../utils/storage';
 import { api, localApi } from '../utils/api';
-import { Config as ConfigType, DataSource } from '../types/note';
+import { Config as ConfigType, DataSource, NoteTemplateConfig, MetadataField, CardFontSizes } from '../types/note';
+import { parseFrontmatterKeys } from '../utils/frontmatter';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
+import { Switch } from '../components/ui/switch';
 import { Save, FolderOpen, FileText, BookOpen, Lightbulb, Database, Download, CheckCircle, XCircle, AlertCircle, RefreshCw, Eye, Wifi, Tag, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { migrateToDatabase, downloadBackup } from '../utils/migrate';
@@ -14,11 +16,14 @@ import { useNavigate } from 'react-router';
 export function Config() {
   const [config, setConfig] = useState<ConfigType>(storage.getConfig());
   const [notePath, setNotePath] = useState(config.notePath);
-  const [fleetNoteTemplate, setFleetNoteTemplate] = useState(config.fleetNoteTemplate);
-  const [permanentNoteTemplate, setPermanentNoteTemplate] = useState(config.permanentNoteTemplate);
-  const [sourceNoteTemplate, setSourceNoteTemplate] = useState(config.sourceNoteTemplate);
+  const [sourceNoteSavePath, setSourceNoteSavePath] = useState(config.sourceNoteSavePath || '');
+  const [fleetNoteTemplate, setFleetNoteTemplate] = useState<NoteTemplateConfig>(config.fleetNoteTemplate);
+  const [permanentNoteTemplate, setPermanentNoteTemplate] = useState<NoteTemplateConfig>(config.permanentNoteTemplate);
+  const [sourceNoteTemplate, setSourceNoteTemplate] = useState<NoteTemplateConfig>(config.sourceNoteTemplate);
   const [dataSource, setDataSource] = useState<DataSource>(config.dataSource || 'supabase');
   const [obsidianBackendUrl, setObsidianBackendUrl] = useState(config.obsidianBackendUrl || 'http://localhost:3001');
+  const [localServerToken, setLocalServerToken] = useState(config.localServerToken || '');
+  const [allowExternalAnalysis, setAllowExternalAnalysis] = useState(config.allowExternalAnalysis === true);
   const [fleetNoteTags, setFleetNoteTags] = useState<string[]>(config.fleetNoteTags || []);
   const [fleetTagInput, setFleetTagInput] = useState('');
   const [sourceNoteTags, setSourceNoteTags] = useState<string[]>(config.sourceNoteTags || []);
@@ -28,14 +33,41 @@ export function Config() {
   const [isCheckingDb, setIsCheckingDb] = useState(false);
   const [localStatus, setLocalStatus] = useState<{ ok: boolean; qmd: { ok: boolean; message: string }; claude: { ok: boolean; message: string } } | null>(null);
   const [isCheckingLocal, setIsCheckingLocal] = useState(false);
+  const [displayMetadataKeys, setDisplayMetadataKeys] = useState<string[]>(config.displayMetadataKeys || []);
+  const [availableMetadataKeys, setAvailableMetadataKeys] = useState<string[]>([]);
+  const [isScanningKeys, setIsScanningKeys] = useState(false);
+  const DEFAULT_CARD_FONT_SIZES: CardFontSizes = { title: 18, h1: 16, h2: 14, h3: 13, h4: 12, body: 12, metadata: 11 };
+  const [cardFontSizes, setCardFontSizes] = useState<CardFontSizes>({ ...DEFAULT_CARD_FONT_SIZES, ...(config.cardFontSizes || {}) });
 
   useEffect(() => {
     setNotePath(config.notePath);
+    setSourceNoteSavePath(config.sourceNoteSavePath || '');
     setFleetNoteTemplate(config.fleetNoteTemplate);
     setPermanentNoteTemplate(config.permanentNoteTemplate);
     setSourceNoteTemplate(config.sourceNoteTemplate);
+    setLocalServerToken(config.localServerToken || '');
+    setAllowExternalAnalysis(config.allowExternalAnalysis === true);
     checkDatabaseStatus();
   }, [config]);
+
+  useEffect(() => {
+    const scanNotes = async () => {
+      setIsScanningKeys(true);
+      try {
+        const notes = await storage.getNotes();
+        const keySet = new Set<string>();
+        for (const note of notes) {
+          for (const key of parseFrontmatterKeys(note.content)) {
+            keySet.add(key);
+          }
+        }
+        setAvailableMetadataKeys([...keySet].sort());
+      } finally {
+        setIsScanningKeys(false);
+      }
+    };
+    scanNotes();
+  }, []);
 
   const checkDatabaseStatus = async () => {
     setIsCheckingDb(true);
@@ -56,13 +88,19 @@ export function Config() {
   const handleSave = () => {
     const newConfig: ConfigType = {
       notePath,
+      sourceNoteSavePath: sourceNoteSavePath.trim() || undefined,
       fleetNoteTemplate,
       permanentNoteTemplate,
       sourceNoteTemplate,
       dataSource,
       obsidianBackendUrl: obsidianBackendUrl.trim() || 'http://localhost:3001',
+      localServerToken: localServerToken.trim() || undefined,
+      allowExternalAnalysis,
       fleetNoteTags,
       sourceNoteTags,
+      displayMetadataKeys,
+      fontSize: 12,
+      cardFontSizes,
     };
 
     storage.saveConfig(newConfig);
@@ -112,35 +150,33 @@ export function Config() {
     toast.success('備份已下載');
   };
 
-  const resetFleetTemplate = () => {
-    const defaultTemplate = `# Note
+  const resetFleetTemplate = () => setFleetNoteTemplate(storage.getConfig().fleetNoteTemplate);
+  const resetPermanentTemplate = () => setPermanentNoteTemplate(storage.getConfig().permanentNoteTemplate);
+  const resetSourceTemplate = () => setSourceNoteTemplate(storage.getConfig().sourceNoteTemplate);
 
-# Question 
-
-# personal connection or purpose
-
-# TO DO step 
-
-# others &  Reference`;
-    setFleetNoteTemplate(defaultTemplate);
+  const updateMetadataField = (
+    setter: React.Dispatch<React.SetStateAction<NoteTemplateConfig>>,
+    index: number,
+    patch: Partial<MetadataField>
+  ) => {
+    setter(prev => ({
+      ...prev,
+      metadataFields: prev.metadataFields.map((f, i) => i === index ? { ...f, ...patch } : f),
+    }));
   };
 
-  const resetPermanentTemplate = () => {
-    const defaultTemplate = `# Note
-
-# Question 
-
-# personal connection or purpose
-
-# TO DO step 
-
-# others &  Reference`;
-    setPermanentNoteTemplate(defaultTemplate);
+  const addMetadataField = (setter: React.Dispatch<React.SetStateAction<NoteTemplateConfig>>) => {
+    setter(prev => ({
+      ...prev,
+      metadataFields: [...prev.metadataFields, { key: '', defaultValue: '' }],
+    }));
   };
 
-  const resetSourceTemplate = () => {
-    const defaultTemplate = '# Source Note\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n## 個人想法\n\n## 標籤\n\n';
-    setSourceNoteTemplate(defaultTemplate);
+  const removeMetadataField = (setter: React.Dispatch<React.SetStateAction<NoteTemplateConfig>>, index: number) => {
+    setter(prev => ({
+      ...prev,
+      metadataFields: prev.metadataFields.filter((_, i) => i !== index),
+    }));
   };
 
   const navigate = useNavigate();
@@ -189,6 +225,47 @@ export function Config() {
           </div>
         </div>
 
+        {/* Font Sizes */}
+        <div className="bg-white border rounded-lg p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText className="size-5 text-gray-600" />
+            <h2>字體大小設定</h2>
+          </div>
+          <p className="text-sm text-gray-500 mb-4">分別設定筆記卡片各層級的字體大小</p>
+          <div className="space-y-4">
+            {([
+              { key: 'title' as keyof CardFontSizes, label: '卡片標題', sample: '筆記名稱' },
+              { key: 'h1'    as keyof CardFontSizes, label: '# 一級標題', sample: '# 大標題' },
+              { key: 'h2'    as keyof CardFontSizes, label: '## 二級標題', sample: '## 中標題' },
+              { key: 'h3'    as keyof CardFontSizes, label: '### 三級標題', sample: '### 小標題' },
+              { key: 'h4'    as keyof CardFontSizes, label: '#### 四級標題', sample: '#### 細標題' },
+              { key: 'body'  as keyof CardFontSizes, label: '內文', sample: '正文段落文字' },
+              { key: 'metadata' as keyof CardFontSizes, label: 'Metadata / Tags', sample: '#tag  key: value' },
+            ] as { key: keyof CardFontSizes; label: string; sample: string }[]).map(({ key, label, sample }) => (
+              <div key={key} className="flex items-center gap-4">
+                <span className="text-sm text-gray-600 w-36 shrink-0">{label}</span>
+                <input
+                  type="range"
+                  min={8}
+                  max={28}
+                  step={1}
+                  value={cardFontSizes[key]}
+                  onChange={e => setCardFontSizes(prev => ({ ...prev, [key]: Number(e.target.value) }))}
+                  className="flex-1"
+                />
+                <span className="text-gray-400 w-10 text-right text-sm">{cardFontSizes[key]}px</span>
+                <span className="text-gray-500 w-32 shrink-0" style={{ fontSize: `${cardFontSizes[key]}px` }}>{sample}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            className="mt-4 text-xs text-gray-400 underline hover:text-gray-600"
+            onClick={() => setCardFontSizes({ title: 18, h1: 16, h2: 14, h3: 13, h4: 12, body: 12, metadata: 11 })}
+          >
+            重置為預設值
+          </button>
+        </div>
+
         {/* Path Configuration */}
         <div className="bg-white border rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -211,6 +288,21 @@ export function Config() {
                   ? <span>你的 Obsidian Vault 所在位置。設定後需在 WSL 執行：<br /><code className="bg-gray-100 px-1 rounded">qmd collection add {notePath || '<vault路徑>'} --name obsidian && qmd embed</code></span>
                   : '設定您的 Markdown 檔案儲存位置'
                 }
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2 flex items-center gap-1">
+                <BookOpen className="size-4 text-green-600" />
+                文獻筆記存檔路徑
+              </label>
+              <Input
+                value={sourceNoteSavePath}
+                onChange={(e) => setSourceNoteSavePath(e.target.value)}
+                placeholder="例如: D:\obsidian\Willy_2026\Sources\others"
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                抓取網址建立的文獻筆記，會同步儲存為 .md 檔案到此路徑。需先啟動本地後端伺服器。留空則不儲存到本機。
               </p>
             </div>
           </div>
@@ -347,31 +439,26 @@ export function Config() {
             <Lightbulb className="size-5 text-gray-600" />
             <h2>閃念筆記模板</h2>
           </div>
-
           <div className="space-y-4">
             <div>
-              <label className="block text-sm mb-2">
-                閃念筆記預設模板
-              </label>
-              <Textarea
-                value={fleetNoteTemplate}
-                onChange={(e) => setFleetNoteTemplate(e.target.value)}
-                placeholder="輸入閃念筆記的預設內容（支援 Markdown）"
-                rows={12}
-                className="font-mono"
-              />
-              <p className="text-sm text-gray-500 mt-2">
-                閃念筆記用於快速記錄想法和靈感，這個模板會在創建閃念筆記時自動套用
-              </p>
+              <label className="block text-sm font-medium mb-2">Metadata 欄位</label>
+              <div className="space-y-2">
+                {fleetNoteTemplate.metadataFields.map((field, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <Input value={field.key} onChange={e => updateMetadataField(setFleetNoteTemplate, i, { key: e.target.value })} placeholder="欄位名稱" className="w-36 font-mono text-sm" />
+                    <span className="text-gray-400">:</span>
+                    <Input value={field.defaultValue} onChange={e => updateMetadataField(setFleetNoteTemplate, i, { defaultValue: e.target.value })} placeholder="預設值（tags 用逗號分隔）" className="flex-1 font-mono text-sm" />
+                    <Button variant="ghost" size="sm" onClick={() => removeMetadataField(setFleetNoteTemplate, i)}><X className="size-4" /></Button>
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={() => addMetadataField(setFleetNoteTemplate)} className="mt-1"><Plus className="size-4 mr-1" />新增欄位</Button>
+              </div>
             </div>
-
-            <Button
-              variant="outline"
-              onClick={resetFleetTemplate}
-              className="mt-2"
-            >
-              重置為預設模板
-            </Button>
+            <div>
+              <label className="block text-sm font-medium mb-2">模板內文</label>
+              <Textarea value={fleetNoteTemplate.bodyTemplate} onChange={e => setFleetNoteTemplate(prev => ({ ...prev, bodyTemplate: e.target.value }))} placeholder="輸入閃念筆記的預設內容（支援 Markdown）" rows={8} className="font-mono" />
+            </div>
+            <Button variant="outline" onClick={resetFleetTemplate} className="mt-2">重置為預設模板</Button>
           </div>
         </div>
 
@@ -381,31 +468,26 @@ export function Config() {
             <Lightbulb className="size-5 text-gray-600" />
             <h2>永久筆記模板</h2>
           </div>
-          
           <div className="space-y-4">
             <div>
-              <label className="block text-sm mb-2">
-                永久筆記預設模板
-              </label>
-              <Textarea
-                value={permanentNoteTemplate}
-                onChange={(e) => setPermanentNoteTemplate(e.target.value)}
-                placeholder="輸入永久筆記的預設內容（支援 Markdown）"
-                rows={12}
-                className="font-mono"
-              />
-              <p className="text-sm text-gray-500 mt-2">
-                永久筆記是經過深思熟慮的知識結晶，這個模板會在創建永久筆記時自動套用
-              </p>
+              <label className="block text-sm font-medium mb-2">Metadata 欄位</label>
+              <div className="space-y-2">
+                {permanentNoteTemplate.metadataFields.map((field, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <Input value={field.key} onChange={e => updateMetadataField(setPermanentNoteTemplate, i, { key: e.target.value })} placeholder="欄位名稱" className="w-36 font-mono text-sm" />
+                    <span className="text-gray-400">:</span>
+                    <Input value={field.defaultValue} onChange={e => updateMetadataField(setPermanentNoteTemplate, i, { defaultValue: e.target.value })} placeholder="預設值（tags 用逗號分隔）" className="flex-1 font-mono text-sm" />
+                    <Button variant="ghost" size="sm" onClick={() => removeMetadataField(setPermanentNoteTemplate, i)}><X className="size-4" /></Button>
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={() => addMetadataField(setPermanentNoteTemplate)} className="mt-1"><Plus className="size-4 mr-1" />新增欄位</Button>
+              </div>
             </div>
-            
-            <Button
-              variant="outline"
-              onClick={resetPermanentTemplate}
-              className="mt-2"
-            >
-              重置為預設模板
-            </Button>
+            <div>
+              <label className="block text-sm font-medium mb-2">模板內文</label>
+              <Textarea value={permanentNoteTemplate.bodyTemplate} onChange={e => setPermanentNoteTemplate(prev => ({ ...prev, bodyTemplate: e.target.value }))} placeholder="輸入永久筆記的預設內容（支援 Markdown）" rows={8} className="font-mono" />
+            </div>
+            <Button variant="outline" onClick={resetPermanentTemplate} className="mt-2">重置為預設模板</Button>
           </div>
         </div>
 
@@ -415,31 +497,26 @@ export function Config() {
             <BookOpen className="size-5 text-gray-600" />
             <h2>文獻筆記模板</h2>
           </div>
-
           <div className="space-y-4">
             <div>
-              <label className="block text-sm mb-2">
-                文獻筆記預設模板
-              </label>
-              <Textarea
-                value={sourceNoteTemplate}
-                onChange={(e) => setSourceNoteTemplate(e.target.value)}
-                placeholder="輸入文獻筆記的預設內容（支援 Markdown）"
-                rows={14}
-                className="font-mono"
-              />
-              <p className="text-sm text-gray-500 mt-2">
-                文獻筆記用於記錄外部來源的內容和想法，這個模板會在創建文獻筆記時自動套用
-              </p>
+              <label className="block text-sm font-medium mb-2">Metadata 欄位</label>
+              <div className="space-y-2">
+                {sourceNoteTemplate.metadataFields.map((field, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <Input value={field.key} onChange={e => updateMetadataField(setSourceNoteTemplate, i, { key: e.target.value })} placeholder="欄位名稱" className="w-36 font-mono text-sm" />
+                    <span className="text-gray-400">:</span>
+                    <Input value={field.defaultValue} onChange={e => updateMetadataField(setSourceNoteTemplate, i, { defaultValue: e.target.value })} placeholder="預設值（tags 用逗號分隔）" className="flex-1 font-mono text-sm" />
+                    <Button variant="ghost" size="sm" onClick={() => removeMetadataField(setSourceNoteTemplate, i)}><X className="size-4" /></Button>
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={() => addMetadataField(setSourceNoteTemplate)} className="mt-1"><Plus className="size-4 mr-1" />新增欄位</Button>
+              </div>
             </div>
-
-            <Button
-              variant="outline"
-              onClick={resetSourceTemplate}
-              className="mt-2"
-            >
-              重置為預設模板
-            </Button>
+            <div>
+              <label className="block text-sm font-medium mb-2">模板內文</label>
+              <Textarea value={sourceNoteTemplate.bodyTemplate} onChange={e => setSourceNoteTemplate(prev => ({ ...prev, bodyTemplate: e.target.value }))} placeholder="輸入文獻筆記的預設內容（支援 Markdown）" rows={10} className="font-mono" />
+            </div>
+            <Button variant="outline" onClick={resetSourceTemplate} className="mt-2">重置為預設模板</Button>
           </div>
         </div>
 
@@ -540,9 +617,9 @@ export function Config() {
             <h2>本地 Obsidian 連線</h2>
           </div>
           <p className="text-sm text-gray-600 mb-4">
-            設定本地後端伺服器的 URL（透過 Tailscale 可達），用於 QMD 語意搜尋。
+            設定本地後端伺服器的 URL（透過 Tailscale 可達），用於 QMD 語意搜尋與文獻筆記 AI 分析。
             <br />
-            啟動方式：進入 <code className="bg-gray-100 px-1 rounded">local-server/</code> 目錄，執行 <code className="bg-gray-100 px-1 rounded">CLAUDE_API_KEY=sk-ant-... node server.js</code>
+            啟動方式：進入 <code className="bg-gray-100 px-1 rounded">local-server/</code> 目錄，執行 <code className="bg-gray-100 px-1 rounded">node server.js</code>
           </p>
 
           <div className="space-y-4">
@@ -556,6 +633,33 @@ export function Config() {
               <p className="text-sm text-gray-500 mt-1">
                 本機測試用 localhost，遠端透過 Tailscale IP
               </p>
+            </div>
+
+            <div>
+              <label className="block text-sm mb-2">Local Server Token</label>
+              <Input
+                type="password"
+                value={localServerToken}
+                onChange={(e) => setLocalServerToken(e.target.value)}
+                placeholder="與 LOCAL_SERVER_TOKEN 相同"
+              />
+              <p className="text-sm text-gray-500 mt-1">
+                若後端設定了 LOCAL_SERVER_TOKEN，這裡需填入相同 token。Claude API Key 請放在 local-server 的 .env，不會再從前端傳送。
+              </p>
+            </div>
+
+            <div className="flex items-start justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div>
+                <p className="text-sm font-medium text-amber-900">允許外部網址/AI 分析</p>
+                <p className="text-sm text-amber-800 mt-1">
+                  開啟後，貼入網址建立文獻筆記時，可能會連到外部網站、Jina Reader 或後端設定的 Claude API。預設關閉。
+                </p>
+              </div>
+              <Switch
+                checked={allowExternalAnalysis}
+                onCheckedChange={setAllowExternalAnalysis}
+                aria-label="允許外部網址和 AI 分析"
+              />
             </div>
 
             <Button
@@ -595,6 +699,40 @@ export function Config() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* AllFiles Card Metadata Display */}
+        <div className="bg-white border rounded-lg p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Eye className="size-5 text-gray-600" />
+            <h2>AllFiles 卡片顯示欄位</h2>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">選擇要在所有檔案卡片上顯示的 metadata 欄位（從現有筆記掃描而來）</p>
+          {isScanningKeys ? (
+            <p className="text-sm text-gray-400">掃描筆記中...</p>
+          ) : availableMetadataKeys.length === 0 ? (
+            <p className="text-sm text-gray-400">目前沒有筆記包含 metadata 欄位</p>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              {availableMetadataKeys.map(key => (
+                <label key={key} className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={displayMetadataKeys.includes(key)}
+                    onChange={e => {
+                      if (e.target.checked) {
+                        setDisplayMetadataKeys(prev => [...prev, key]);
+                      } else {
+                        setDisplayMetadataKeys(prev => prev.filter(k => k !== key));
+                      }
+                    }}
+                    className="size-4 rounded"
+                  />
+                  <span className="text-sm font-mono">{key}</span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Save Button */}

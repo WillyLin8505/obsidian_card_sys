@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useLocation } from 'react-router';
 import { api } from '../utils/api';
+import { storage } from '../utils/storage';
 import { Note } from '../types/note';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -11,6 +12,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Card } from '../components/ui/card';
 import { toast } from 'sonner';
+import { containsMarkdownImage, preprocessVaultImages } from '../utils/markdownImages';
 
 interface Section {
   heading: string;
@@ -25,8 +27,12 @@ interface Frontmatter {
 }
 
 export function NoteView() {
-  const { id } = useParams<{ id: string }>();
+  const { id: rawId } = useParams<{ id: string }>();
+  const id = rawId ? decodeURIComponent(rawId) : undefined;
+  const isNew = id === 'new';
   const navigate = useNavigate();
+  const location = useLocation();
+  const draftState = location.state as { title?: string; content?: string; type?: Note['type']; tags?: string[] } | null;
   const [note, setNote] = useState<Note | null>(null);
   const [isEditing, setIsEditing] = useState(true); // 預設進入編輯模式
   const [title, setTitle] = useState('');
@@ -111,12 +117,19 @@ export function NoteView() {
     const lines = markdown.split('\n');
     const parsedSections: Section[] = [];
     let currentSection: Section | null = null;
+    const preamble: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
 
       if (headingMatch) {
+        if (!currentSection && preamble.length > 0) {
+          const content = preamble.join('\n').trim();
+          if (content) {
+            parsedSections.push({ heading: '', content, level: 0 });
+          }
+        }
         // 保存上一個區段
         if (currentSection) {
           parsedSections.push(currentSection);
@@ -130,12 +143,20 @@ export function NoteView() {
       } else if (currentSection) {
         // 添加內容到當前區段
         currentSection.content += (currentSection.content ? '\n' : '') + line;
+      } else {
+        preamble.push(line);
       }
     }
 
     // 添加最後一個區段
     if (currentSection) {
       parsedSections.push(currentSection);
+    }
+    if (!currentSection && parsedSections.length === 0) {
+      const content = preamble.join('\n').trim();
+      if (content) {
+        parsedSections.push({ heading: '', content, level: 0 });
+      }
     }
 
     return parsedSections;
@@ -145,6 +166,9 @@ export function NoteView() {
   const sectionsToMarkdown = (sections: Section[]): string => {
     return sections
       .map((section) => {
+        if (section.level <= 0) {
+          return section.content.trim();
+        }
         const heading = '#'.repeat(section.level) + ' ' + section.heading;
         return heading + '\n' + section.content.trim();
       })
@@ -153,25 +177,42 @@ export function NoteView() {
 
   useEffect(() => {
     const loadNote = async () => {
+      if (isNew) {
+        const content = draftState?.content || '';
+        const { frontmatter, content: bodyContent } = parseFrontmatter(content);
+        setTitle(draftState?.title || '新筆記');
+        setCreateDate(new Date().toISOString().split('T')[0]);
+        setAliases(frontmatter.aliases || []);
+        const draftTags = draftState?.tags || [];
+        setTags([...new Set([...(frontmatter.tags || []), ...draftTags])]);
+        setSections(parseMarkdownSections(bodyContent));
+        setLoading(false);
+        return;
+      }
+
       if (id) {
         try {
           setLoading(true);
-          const foundNote = await api.notes.getById(id);
+          const foundNote = await storage.getNoteById(id);
           if (foundNote) {
+            storage.recordOpened(foundNote.id);
             setNote(foundNote);
             setTitle(foundNote.title);
 
             // 解析 frontmatter
             const { frontmatter, content } = parseFrontmatter(foundNote.content);
-            
+
             // 設置 frontmatter 資料 - 自動帶入建立日期
-            const noteCreatedDate = foundNote.createdAt 
-              ? new Date(foundNote.createdAt).toISOString().split('T')[0] 
-              : new Date().toISOString().split('T')[0];
-            
+            const parseDateSafe = (s: string | undefined): string => {
+              if (!s) return new Date().toISOString().split('T')[0];
+              const d = new Date(s);
+              return isNaN(d.getTime()) ? new Date().toISOString().split('T')[0] : d.toISOString().split('T')[0];
+            };
+            const noteCreatedDate = parseDateSafe(foundNote.createdAt);
+
             setCreateDate(frontmatter.createDate || noteCreatedDate);
             setAliases(frontmatter.aliases || []);
-            
+
             // 合併 frontmatter 標籤和 note.tags
             const allTags = [...new Set([...(frontmatter.tags || []), ...(foundNote.tags || [])])];
             setTags(allTags);
@@ -182,7 +223,7 @@ export function NoteView() {
             // Load linked notes
             if (foundNote.links && foundNote.links.length > 0) {
               const linkedNotesData = await Promise.all(
-                foundNote.links.map((linkId) => api.notes.getById(linkId))
+                foundNote.links.map((linkId) => storage.getNoteById(linkId))
               );
               setLinkedNotes(linkedNotesData.filter(Boolean) as Note[]);
             }
@@ -205,24 +246,43 @@ export function NoteView() {
 
     try {
       const bodyContent = sectionsToMarkdown(sections);
-      const frontmatter = generateFrontmatter(createDate, aliases, tags);
-      const fullContent = frontmatter + bodyContent;
+      const frontmatterStr = generateFrontmatter(createDate, aliases, tags);
+      const fullContent = frontmatterStr + bodyContent;
 
-      await api.notes.update(id, {
+      if (isNew) {
+        const noteType = draftState?.type || 'fleet';
+        const newNote: Note = {
+          id: '',
+          title,
+          content: fullContent,
+          type: noteType,
+          tags,
+          links: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await storage.addNote(newNote);
+        toast.success('筆記已建立');
+        if (noteType === 'source') navigate('/source-notes');
+        else if (noteType === 'permanent') navigate('/permanent-notes');
+        else navigate('/all-files');
+        return;
+      }
+
+      await storage.updateNote(id, {
         title,
         content: fullContent,
-        tags, // 同時更新 tags 欄位
+        tags,
       });
 
-      const updatedNote = await api.notes.getById(id);
+      const updatedNote = await storage.getNoteById(id);
       if (updatedNote) {
         setNote(updatedNote);
       }
       toast.success('筆記已儲存');
-      
-      // 儲存後返回到列表頁面
+
       if (note?.type === 'fleet') {
-        navigate('/fleet-notes');
+        navigate('/all-files');
       } else if (note?.type === 'source') {
         navigate('/source-notes');
       } else if (note?.type === 'permanent') {
@@ -240,12 +300,10 @@ export function NoteView() {
     if (!id || !confirm('確定要刪除這則筆記嗎？')) return;
 
     try {
-      await api.notes.delete(id);
+      await storage.deleteNote(id);
       toast.success('筆記已刪除');
 
-      if (note?.type === 'fleet') {
-        navigate('/fleet-notes');
-      } else if (note?.type === 'source') {
+      if (note?.type === 'source') {
         navigate('/source-notes');
       } else {
         navigate('/all-files');
@@ -325,23 +383,11 @@ export function NoteView() {
 
     try {
       // Get links to find the link ID
-      const { links } = await api.links.getForNote(id);
-      const link = links.find(
-        (l: any) =>
-          (l.from_note_id === id && l.to_note_id === linkedNoteId) ||
-          (l.to_note_id === id && l.from_note_id === linkedNoteId)
-      );
-
-      if (link) {
-        await api.links.delete(link.id);
-        // Reload note to update links
-        const updatedNote = await api.notes.getById(id);
-        if (updatedNote) {
-          setNote(updatedNote);
-          setLinkedNotes(linkedNotes.filter((n) => n.id !== linkedNoteId));
-        }
-        toast.success('連結已移除');
-      }
+      await storage.removeLink(id, linkedNoteId);
+      setLinkedNotes(linkedNotes.filter((n) => n.id !== linkedNoteId));
+      const updatedNote = await storage.getNoteById(id);
+      if (updatedNote) setNote(updatedNote);
+      toast.success('連結已移除');
     } catch (error: any) {
       console.error('Error removing link:', error);
       toast.error(`移除連結失敗: ${error.message}`);
@@ -353,13 +399,17 @@ export function NoteView() {
   };
 
   const handleBack = () => {
-    if (note?.type === 'fleet') {
-      navigate('/fleet-notes');
-    } else if (note?.type === 'source') {
-      navigate('/source-notes');
-    } else {
+    if (isNew) {
       navigate('/all-files');
+      return;
     }
+    if (location.key !== 'default') {
+      navigate(-1);
+      return;
+    }
+    if (note?.type === 'fleet') navigate('/all-files');
+    else if (note?.type === 'source') navigate('/source-notes');
+    else navigate('/permanent-notes');
   };
 
   if (loading) {
@@ -370,7 +420,7 @@ export function NoteView() {
     );
   }
 
-  if (!note) {
+  if (!note && !isNew) {
     return (
       <div className="p-6">
         <div className="text-center py-12 text-gray-500">找不到筆記</div>
@@ -379,7 +429,7 @@ export function NoteView() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className={isEditing ? 'p-6 w-full' : 'p-6 max-w-5xl mx-auto'}>
       <div className="flex items-center justify-between mb-6">
         <Button
           variant="ghost"
@@ -391,20 +441,22 @@ export function NoteView() {
         </Button>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={handleLinkClick}
-            className="flex items-center gap-2"
-          >
-            <Link2 className="size-4" />
-            連結筆記
-          </Button>
+          {!isNew && (
+            <Button
+              variant="outline"
+              onClick={handleLinkClick}
+              className="flex items-center gap-2"
+            >
+              <Link2 className="size-4" />
+              連結筆記
+            </Button>
+          )}
 
           {isEditing ? (
             <>
-              <Button 
+              <Button
                 variant="outline"
-                onClick={() => setIsEditing(false)} 
+                onClick={() => setIsEditing(false)}
                 className="flex items-center gap-2"
               >
                 <Eye className="size-4" />
@@ -422,14 +474,16 @@ export function NoteView() {
             </Button>
           )}
 
-          <Button
-            variant="destructive"
-            onClick={handleDelete}
-            className="flex items-center gap-2"
-          >
-            <Trash2 className="size-4" />
-            刪除
-          </Button>
+          {!isNew && (
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              className="flex items-center gap-2"
+            >
+              <Trash2 className="size-4" />
+              刪除
+            </Button>
+          )}
         </div>
       </div>
 
@@ -447,82 +501,123 @@ export function NoteView() {
         )}
       </div>
 
-      {/* Metadata Section - 只在查看模式顯示 */}
-      {!isEditing && (
-        <Card className="p-4 mb-6 bg-gray-50">
-          <h3 className="mb-3 text-sm font-semibold text-gray-600">元數據</h3>
-          
-          {/* Create Date */}
-          <div className="mb-3">
-            <label className="text-sm text-gray-600 block mb-1">建立日期</label>
+      {/* Metadata Section */}
+      <Card className="p-4 mb-6 bg-gray-50">
+        <h3 className="mb-3 text-sm font-semibold text-gray-600">元數據</h3>
+        
+        {/* Create Date */}
+        <div className="mb-3">
+          <label className="text-sm text-gray-600 block mb-1">建立日期</label>
+          {isEditing ? (
+            <Input
+              value={createDate}
+              onChange={(e) => setCreateDate(e.target.value)}
+              placeholder="YYYY-MM-DD"
+              className="max-w-xs"
+            />
+          ) : (
             <div className="text-sm">{createDate || '未設定'}</div>
-          </div>
+          )}
+        </div>
 
-          {/* Aliases */}
-          <div>
-            <label className="text-sm text-gray-600 block mb-1">別名</label>
-            <div className="flex flex-wrap gap-2 mb-2">
-              {aliases && aliases.length > 0 ? (
-                aliases.map((alias) => (
-                  <Badge
-                    key={alias}
-                    variant="outline"
-                  >
-                    {alias}
-                  </Badge>
-                ))
-              ) : (
-                <div className="text-sm text-gray-500">尚無別名</div>
-              )}
-            </div>
+        {/* Aliases */}
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">別名</label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {aliases && aliases.length > 0 ? (
+              aliases.map((alias) => (
+                <Badge
+                  key={alias}
+                  variant="outline"
+                  className={isEditing ? 'cursor-pointer hover:bg-red-100' : ''}
+                  onClick={isEditing ? () => handleRemoveAlias(alias) : undefined}
+                >
+                  {alias}{isEditing && <X className="size-3 ml-1" />}
+                </Badge>
+              ))
+            ) : (
+              <div className="text-sm text-gray-500">尚無別名</div>
+            )}
           </div>
-        </Card>
-      )}
+          {isEditing && (
+            <div className="flex gap-2 max-w-md">
+              <Input
+                value={newAlias}
+                onChange={(e) => setNewAlias(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAddAlias()}
+                placeholder="新增別名"
+              />
+              <Button onClick={handleAddAlias} variant="outline">
+                <Plus className="size-4" />
+              </Button>
+            </div>
+          )}
+        </div>
+      </Card>
 
       {/* Sections */}
-      <div className="space-y-4 mb-6">
+      <div className="mb-6">
         {isEditing ? (
-          <>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
             {sections.map((section, index) => (
-              <Card key={index} className="p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <Input
-                    value={section.heading}
-                    onChange={(e) => handleUpdateSection(index, 'heading', e.target.value)}
-                    placeholder="區段標題"
-                    className="text-xl font-semibold border-none shadow-none focus-visible:ring-0 px-0"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemoveSection(index)}
-                    className="flex-shrink-0"
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
+              <Card key={index} className="p-4 min-w-0">
+                {section.level > 0 && (
+                  <div className="flex items-start justify-between mb-3">
+                    <Input
+                      value={section.heading}
+                      onChange={(e) => handleUpdateSection(index, 'heading', e.target.value)}
+                      placeholder="區段標題"
+                      className="text-xl font-semibold border-none shadow-none focus-visible:ring-0 px-0"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveSection(index)}
+                      className="flex-shrink-0"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                )}
                 <Textarea
                   value={section.content}
                   onChange={(e) => handleUpdateSection(index, 'content', e.target.value)}
                   placeholder="輸入內容（支援 Markdown）"
-                  rows={6}
-                  className="font-mono resize-y"
+                  className="h-[500px] resize-none overflow-y-auto font-mono"
                 />
+                {containsMarkdownImage(section.content) && (
+                  <div className="mt-3 prose prose-sm max-w-none overflow-hidden">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        img: ({ src, alt }) => (
+                          <img
+                            src={src || ''}
+                            alt={alt || ''}
+                            className="max-w-full max-h-[520px] rounded border object-contain"
+                          />
+                        ),
+                      }}
+                    >
+                      {preprocessVaultImages(section.content)}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </Card>
             ))}
             <Button
               variant="outline"
               onClick={handleAddSection}
-              className="w-full flex items-center gap-2"
+              className="w-full flex items-center gap-2 xl:col-span-3"
             >
               <Plus className="size-4" />
               新增區段
             </Button>
-          </>
+          </div>
         ) : (
           <div className="prose max-w-none bg-white border rounded-lg p-6">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {sectionsToMarkdown(sections)}
+              {preprocessVaultImages(sectionsToMarkdown(sections))}
             </ReactMarkdown>
           </div>
         )}

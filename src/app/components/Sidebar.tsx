@@ -6,7 +6,7 @@ export function Sidebar() {
 
   const links = [
     { to: '/all-files', icon: Search, label: '所有檔案' },
-    { to: '/permanent-notes', icon: Network, label: '永久筆記' },
+    { to: '/permanent-notes', icon: Network, label: '連結筆記' },
     { to: '/source-notes', icon: BookOpen, label: '文獻筆記' },
     { to: '/config', icon: Settings, label: '設定' },
     { to: '/data-check', icon: Eye, label: '資料檢查' },

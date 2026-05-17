@@ -3,10 +3,21 @@ import { AlertCircle, CheckCircle, Database, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 
+function getDataSource(): string {
+  try {
+    const raw = localStorage.getItem('zettelkasten_config');
+    const config = raw ? JSON.parse(raw) : {};
+    return config.dataSource || 'supabase';
+  } catch {
+    return 'supabase';
+  }
+}
+
 export function DatabaseStatus() {
   const [status, setStatus] = useState<'checking' | 'healthy' | 'error'>('checking');
   const [message, setMessage] = useState('');
   const [showDetails, setShowDetails] = useState(false);
+  const isSupabase = getDataSource() === 'supabase';
 
   const checkDatabase = async () => {
     setStatus('checking');
@@ -68,8 +79,14 @@ export function DatabaseStatus() {
   };
 
   useEffect(() => {
-    checkDatabase();
+    if (isSupabase) {
+      checkDatabase();
+    }
   }, []);
+
+  if (!isSupabase) {
+    return null;
+  }
 
   if (status === 'checking') {
     return (
@@ -83,7 +100,7 @@ export function DatabaseStatus() {
   }
 
   if (status === 'healthy' && !showDetails) {
-    return null; // Don't show anything if everything is fine
+    return null;
   }
 
   return (

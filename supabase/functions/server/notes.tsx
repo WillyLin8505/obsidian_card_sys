@@ -11,101 +11,174 @@ app.get("/search", async (c) => {
     const supabase = getSupabaseClient();
     const userId = await getUserId(c.req.header("Authorization"));
 
-    // Build base query for notes
-    let notesQuery = supabase
-      .from("notes")
-      .select(`
-        id,
-        title,
-        note_type,
-        source_url,
-        created_at,
-        updated_at,
-        note_tags (
-          tag_id,
-          tags (
-            id,
-            name
-          )
+    const noteSelect = `
+      id,
+      title,
+      note_type,
+      source_url,
+      created_at,
+      updated_at,
+      note_tags (
+        tag_id,
+        tags (
+          id,
+          name
         )
-      `)
-      .eq("user_id", userId)
-      .eq("status", "active");
+      )
+    `;
 
-    // Filter by type if provided
-    if (type) {
-      notesQuery = notesQuery.eq("note_type", type);
-    }
+    if (!query) {
+      // No query: return all notes sorted by updated_at
+      let baseQuery = supabase
+        .from("notes")
+        .select(noteSelect)
+        .eq("user_id", userId)
+        .eq("status", "active");
+      if (type) baseQuery = baseQuery.eq("note_type", type);
+      const { data: notesData, error: notesError } = await baseQuery.order("updated_at", { ascending: false });
+      if (notesError) return c.json({ error: notesError.message }, 500);
 
-    // Search in title if query provided
-    if (query) {
-      notesQuery = notesQuery.ilike("title", `%${query}%`);
-    }
-
-    const { data: notesData, error: notesError } = await notesQuery.order("updated_at", { ascending: false });
-
-    if (notesError) {
-      console.log("Error searching notes:", notesError);
-      return c.json({ error: notesError.message }, 500);
-    }
-
-    // Get note IDs to search in content
-    const noteIds = notesData?.map((n: any) => n.id) || [];
-    
-    // Also search in chunks if query provided
-    let matchingNoteIds = new Set(noteIds);
-    if (query && noteIds.length > 0) {
-      const { data: chunks, error: chunksError } = await supabase
+      const noteIds = notesData?.map((n: any) => n.id) || [];
+      const { data: chunks } = await supabase
         .from("note_chunks")
-        .select("note_id")
+        .select("note_id, content, chunk_index")
         .in("note_id", noteIds)
-        .ilike("content", `%${query}%`);
-
-      if (!chunksError && chunks) {
-        chunks.forEach((chunk: any) => matchingNoteIds.add(chunk.note_id));
-      }
+        .order("chunk_index");
+      const chunksMap = new Map<string, string[]>();
+      chunks?.forEach((chunk: any) => {
+        if (!chunksMap.has(chunk.note_id)) chunksMap.set(chunk.note_id, []);
+        chunksMap.get(chunk.note_id)!.push(chunk.content);
+      });
+      const notes = notesData?.map((note: any) => ({
+        id: note.id,
+        title: note.title,
+        content: chunksMap.get(note.id)?.join("\n\n") || "",
+        type: note.note_type,
+        tags: note.note_tags?.map((nt: any) => nt.tags.name) || [],
+        links: [],
+        sourceUrl: note.source_url,
+        createdAt: note.created_at,
+        updatedAt: note.updated_at,
+      })) || [];
+      return c.json({ notes });
     }
 
-    // Filter notes to only matching ones
-    const matchingNotes = notesData?.filter((note: any) => 
-      !query || matchingNoteIds.has(note.id)
-    ) || [];
+    // Step 1: Fetch title-matching notes
+    let titleQuery = supabase
+      .from("notes")
+      .select(noteSelect)
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .ilike("title", `%${query}%`);
+    if (type) titleQuery = titleQuery.eq("note_type", type);
+    const { data: titleMatchNotes, error: titleError } = await titleQuery;
+    if (titleError) return c.json({ error: titleError.message }, 500);
 
-    // Get content for matching notes
-    const { data: chunks, error: chunksError } = await supabase
+    const titleMatchIds = new Set((titleMatchNotes || []).map((n: any) => n.id));
+
+    // Step 2: Fetch content-matching note_ids from ALL user's chunks
+    const { data: contentMatchChunks } = await supabase
+      .from("note_chunks")
+      .select("note_id")
+      .eq("user_id", userId)
+      .ilike("content", `%${query}%`);
+
+    const contentOnlyIds = (contentMatchChunks || [])
+      .map((c: any) => c.note_id)
+      .filter((id: string) => !titleMatchIds.has(id));
+    const uniqueContentOnlyIds = [...new Set<string>(contentOnlyIds)];
+
+    // Step 3: Fetch metadata for content-only matches
+    let contentOnlyNotes: any[] = [];
+    if (uniqueContentOnlyIds.length > 0) {
+      let coQuery = supabase
+        .from("notes")
+        .select(noteSelect)
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .in("id", uniqueContentOnlyIds);
+      if (type) coQuery = coQuery.eq("note_type", type);
+      const { data } = await coQuery;
+      contentOnlyNotes = data || [];
+    }
+
+    // Merge all matching notes
+    const allMatchingNotes: any[] = [...(titleMatchNotes || []), ...contentOnlyNotes];
+    if (allMatchingNotes.length === 0) return c.json({ notes: [] });
+
+    // Step 4: Fetch content for all matching notes
+    const allIds = allMatchingNotes.map((n: any) => n.id);
+    const { data: chunks } = await supabase
       .from("note_chunks")
       .select("note_id, content, chunk_index")
-      .in("note_id", Array.from(matchingNoteIds))
-      .order("note_id")
+      .in("note_id", allIds)
       .order("chunk_index");
 
-    if (chunksError) {
-      console.log("Error fetching chunks:", chunksError);
-    }
-
-    // Group chunks by note_id
-    const chunksMap = new Map();
+    const chunksMap = new Map<string, string[]>();
     chunks?.forEach((chunk: any) => {
-      if (!chunksMap.has(chunk.note_id)) {
-        chunksMap.set(chunk.note_id, []);
-      }
-      chunksMap.get(chunk.note_id).push(chunk.content);
+      if (!chunksMap.has(chunk.note_id)) chunksMap.set(chunk.note_id, []);
+      chunksMap.get(chunk.note_id)!.push(chunk.content);
     });
 
-    // Transform notes
-    const notes = matchingNotes.map((note: any) => ({
-      id: note.id,
-      title: note.title,
-      content: chunksMap.get(note.id)?.join("\n\n") || "",
-      type: note.note_type,
-      tags: note.note_tags?.map((nt: any) => nt.tags.name) || [],
-      links: [],
-      sourceUrl: note.source_url,
-      createdAt: note.created_at,
-      updatedAt: note.updated_at,
-    }));
+    // Step 5: Score each note for relevance
+    function countOccurrences(text: string, term: string): number {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return (text.match(new RegExp(escaped, "gi")) || []).length;
+    }
 
-    return c.json({ notes });
+    function scoreNote(note: any, content: string): number {
+      const q = query.toLowerCase();
+      const titleLower = note.title.toLowerCase();
+      const tags: string[] = note.note_tags?.map((nt: any) => nt.tags.name) || [];
+      let score = 0;
+
+      // Title scoring (highest priority)
+      if (titleLower === q) {
+        score += 100;
+      } else if (titleLower.startsWith(q)) {
+        score += 80;
+      } else if (titleLower.includes(q)) {
+        score += 60;
+      }
+
+      // Tag match
+      const tagMatches = tags.filter(t => t.toLowerCase().includes(q)).length;
+      score += tagMatches * 30;
+
+      // Content occurrences (capped at 30)
+      const occurrences = countOccurrences(content, q);
+      score += Math.min(occurrences * 5, 30);
+
+      return score;
+    }
+
+    // Step 6: Build result and sort by score desc, then updated_at desc
+    const scored = allMatchingNotes.map((note: any) => {
+      const content = chunksMap.get(note.id)?.join("\n\n") || "";
+      return {
+        score: scoreNote(note, content),
+        note: {
+          id: note.id,
+          title: note.title,
+          content,
+          type: note.note_type,
+          tags: note.note_tags?.map((nt: any) => nt.tags.name) || [],
+          links: [],
+          sourceUrl: note.source_url,
+          createdAt: note.created_at,
+          updatedAt: note.updated_at,
+        },
+      };
+    });
+
+    scored.sort((a: any, b: any) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return new Date(b.note.updatedAt).getTime() - new Date(a.note.updatedAt).getTime();
+    });
+
+    const qLower = query.toLowerCase();
+    const filtered = scored.filter((s: any) => s.note.title.toLowerCase() !== qLower);
+    return c.json({ notes: filtered.map((s: any) => s.note) });
   } catch (error: any) {
     console.log("Error in GET /notes/search:", error);
     return c.json({ error: error.message }, 500);
