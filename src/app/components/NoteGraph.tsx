@@ -710,18 +710,22 @@ function forceFocusedSubtreeSide<T extends { positions: Map<string, RingPosition
     focusedLabelArcRequirement(noteName(id), depth, centerSet.has(id)) / Math.max(1, radius)
   ));
   const focusedArcBudget = focusedArcWidths.reduce((sum, width) => sum + width, 0);
-  const packedFocusWidth = Math.min(
+
+  // Arc required by regular nodes — must be reserved before allocating focus width.
+  const regularArcReqs = regularIds.map(id => labelArcRequirement(noteName(id), depth, centerSet.has(id)));
+  const regularArcNeeded = regularArcReqs.reduce((sum, a) => sum + a, 0) / Math.max(1, radius);
+
+  // Cap focus width so regular nodes always keep their minimum required arc.
+  const rawFocusWidth = Math.min(
     regularIds.length > 0 ? Math.PI * 1.7 : Math.PI * 2,
-    Math.max(
-      focusedArcBudget,
-      focusedIds.length === 0 ? globalSector * 1.2 : 0,
-    ),
+    Math.max(focusedArcBudget, focusedIds.length === 0 ? globalSector * 1.2 : 0),
   );
+  const packedFocusWidth = regularIds.length > 0
+    ? Math.min(rawFocusWidth, Math.max(0.01, Math.PI * 2 - regularArcNeeded))
+    : rawFocusWidth;
+
   const focusStart = focusAngle - packedFocusWidth / 2;
   const focusEnd = focusAngle + packedFocusWidth / 2;
-  const regularSpan = Math.max(0.01, Math.PI * 2 - packedFocusWidth);
-  const regularStart = focusEnd + (regularIds.length > 0 ? regularSpan / (regularIds.length + 1) : 0);
-  const openSpacing = regularIds.length <= 1 ? 0 : regularSpan / (regularIds.length + 1);
   const candidateOffsets = [0];
   const focusedTargets: { id: string; targetAngle: number }[] = [];
   let focusCursor = focusStart;
@@ -740,13 +744,16 @@ function forceFocusedSubtreeSide<T extends { positions: Map<string, RingPosition
     candidateOffsets.push(-offset, offset);
   }
 
-  const placeIds = [
-    ...focusedTargets,
-    ...regularIds.map((id, index) => ({
-      id,
-      targetAngle: regularIds.length <= 1 ? focusAngle + Math.PI : regularStart + openSpacing * index,
-    })),
-  ];
+  // Cumulative arc placement for regular nodes to guarantee minimum distances.
+  let regularCursor = 0;
+  const regularTargets = regularIds.map((id, index) => {
+    const arcReq = regularArcReqs[index];
+    const targetAngle = focusEnd + (regularCursor + arcReq / 2) / Math.max(1, radius);
+    regularCursor += arcReq;
+    return { id, targetAngle };
+  });
+
+  const placeIds = [...focusedTargets, ...regularTargets];
 
   placeIds.forEach(({ id, targetAngle }, index) => {
     const isFocused = index < focusedIds.length;
