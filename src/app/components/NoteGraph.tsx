@@ -1,6 +1,5 @@
 import { useRef, useMemo, useEffect, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { forceCollide } from 'd3-force-3d';
 import { Note } from '../types/note';
 
 interface Props {
@@ -840,11 +839,10 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const prevCenterKeyRef = useRef<string>('');
   const nodeLayouts = useRef<Map<string, NodeLayout>>(new Map());
-  const engineRunning = useRef(true);
-  const isDragging = useRef(false);
-  const savedPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
   const savedAngles = useRef<Map<string, number>>(new Map());
+  const prevDepthRef = useRef<number>(1);
   const focusLayoutRequest = useRef<string | null>(null);
+  const focusTriggerRef = useRef(false);
   const [dims, setDims] = useState({ width: 440, height: 300 });
   const [internalSliderDepth, setInternalSliderDepth] = useState(1);
   const sliderDepth = depth ?? internalSliderDepth;
@@ -852,7 +850,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   const [computedDepth, setComputedDepth] = useState(1);
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [layoutRevision, setLayoutRevision] = useState(0);
   const [graphVisible, setGraphVisible] = useState(false);
   const needsRevealRef = useRef(false);
 
@@ -945,6 +942,10 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       prevCenterKeyRef.current = centerKey;
       savedAngles.current = new Map();
       focusLayoutRequest.current = null;
+    }
+    if (prevDepthRef.current !== computedDepth) {
+      prevDepthRef.current = computedDepth;
+      savedAngles.current = new Map();
     }
 
     const nodeDepths = new Map<string, number>();
@@ -1180,46 +1181,34 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     });
 
     return { nodes, links, childMap };
-  }, [allNotes, centerNoteIds, centerSet, outMap, inMap, computedDepth, focusedNodeId, layoutRevision]);
+  }, [allNotes, centerNoteIds, centerSet, outMap, inMap, computedDepth, focusedNodeId]);
 
   const highlightIds = useMemo(() => {
     const rootId = focusedNodeId ?? hoverNodeId;
     if (!rootId) return null;
-    const ids = new Set<string>();
-    const stack = [rootId];
-    while (stack.length > 0) {
-      const id = stack.pop()!;
-      if (ids.has(id)) continue;
-      ids.add(id);
-      graphData.childMap[id]?.forEach(childId => stack.push(childId));
-    }
+    const visibleIds = new Set<string>(graphData.nodes.map((n: any) => n.id as string));
+    const ids = new Set<string>([rootId]);
+    outMap.get(rootId)?.forEach(tid => { if (visibleIds.has(tid)) ids.add(tid); });
+    inMap.get(rootId)?.forEach(src => { if (visibleIds.has(src)) ids.add(src); });
     return ids;
-  }, [focusedNodeId, hoverNodeId, graphData]);
+  }, [focusedNodeId, hoverNodeId, outMap, inMap, graphData]);
 
   useEffect(() => {
-    engineRunning.current = true;
     nodeLayouts.current = new Map();
-    needsRevealRef.current = true;
+    if (!focusTriggerRef.current) {
+      needsRevealRef.current = true;
+    }
+    focusTriggerRef.current = false;
   }, [graphData]);
-
-  useEffect(() => {
-    if (!graphVisible) return;
-    const t = setTimeout(() => graphRef.current?.zoomToFit(300, 60), 80);
-    return () => clearTimeout(t);
-  }, [graphVisible, graphData]);
 
   useEffect(() => {
     const fg = graphRef.current;
     if (!fg) return;
     syncGraphNodePositions(fg, graphData.nodes as any[]);
-    // Nodes are pinned via fx/fy — forceX/Y are redundant.
-    // Keep a mild collision force so overlapping labels still repel visually.
+    // All nodes are pinned via fx/fy — forces are no-ops on pinned nodes.
     fg.d3Force('charge')?.strength(0);
     fg.d3Force('link')?.strength(0);
-    fg.d3Force('collision', forceCollide((node: any) => {
-      const r = nodeCircleRadius(node.depth as number, node.isCenter as boolean);
-      return r + 5;
-    }).strength(0.5).iterations(2));
+    fg.d3Force('collision', null);
     fg.d3Force('radial', null);
     fg.d3Force('x', null);
     fg.d3Force('y', null);
@@ -1240,7 +1229,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         ) : (
           <div style={{ opacity: graphVisible ? 1 : 0, pointerEvents: graphVisible ? 'auto' : 'none' }}>
           <ForceGraph2D
-            key={`${centerNoteIds.join('\x00')}|${computedDepth}|${layoutRevision}`}
+            key={`${centerNoteIds.join('\x00')}|${computedDepth}`}
             ref={graphRef}
             graphData={graphData}
             width={dims.width}
@@ -1254,7 +1243,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 ? '#94a3b8'
                 : 'rgba(148, 163, 184, 0.16)';
             }}
-            linkWidth={() => 1}
+            linkWidth={(link: any) => link.bidirectional ? 2 : 1}
             linkDirectionalArrowLength={(link: any) => {
               if (!highlightIds) return 4;
               const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
@@ -1281,20 +1270,20 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               const isDimmed = Boolean(highlightIds && !highlightIds.has(node.id as string));
               const nodeAlpha = isDimmed ? 0.18 : 1;
               const labelAlpha = isDimmed ? 0.24 : 1;
-              const { pillX, aly, lines } = layout;
-              // Circle always at node.y — the pinned ring position never deviates.
-              const circleY = node.y as number;
+              const { lines } = layout;
+              const nx = node.x as number;
+              const ny = node.y as number;
 
               ctx.save();
               ctx.globalAlpha = nodeAlpha;
               if (isCenter) {
                 ctx.beginPath();
-                ctx.arc(node.x, circleY, r + 3, 0, 2 * Math.PI);
+                ctx.arc(nx, ny, r + 3, 0, 2 * Math.PI);
                 ctx.fillStyle = hexToRgba(CENTER_COLOR, 0.18);
                 ctx.fill();
               }
               ctx.beginPath();
-              ctx.arc(node.x, circleY, r, 0, 2 * Math.PI);
+              ctx.arc(nx, ny, r, 0, 2 * Math.PI);
               ctx.fillStyle = color;
               ctx.fill();
               ctx.restore();
@@ -1307,17 +1296,26 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               const lineH = fontSize + 2;
               const totalH = lines.length * lineH;
               const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
-              const halfH = totalH / 2 + 2;
-              const labelY = aly;
-              const labelX = pillX;
+
+              // Recompute label center from actual text width so the visual gap
+              // between node circle and pill edge is exactly LABEL_NODE_MIN_GAP (6px).
+              const nodeRadius = Math.hypot(nx, ny);
+              const inward = nodeRadius > 1
+                ? { x: -nx / nodeRadius, y: -ny / nodeRadius }
+                : { x: 0, y: 1 };
+              const halfW = maxW / 2 + LABEL_PAD_X / 2 + LABEL_BORDER_WIDTH / 2;
+              const halfH = totalH / 2 + LABEL_PAD_Y / 2 + LABEL_BORDER_WIDTH / 2;
+              const projHalf = Math.abs(inward.x) * halfW + Math.abs(inward.y) * halfH;
+              const labelCx = nx + inward.x * (r + LABEL_NODE_MIN_GAP + projHalf);
+              const labelCy = ny + inward.y * (r + LABEL_NODE_MIN_GAP + projHalf);
 
               ctx.save();
               ctx.globalAlpha = labelAlpha;
               ctx.lineWidth = LABEL_BORDER_WIDTH;
-              const rectX = labelX + LABEL_BORDER_WIDTH / 2;
-              const rectY = labelY - halfH + LABEL_BORDER_WIDTH / 2;
-              const rectW = maxW + 4 - LABEL_BORDER_WIDTH;
-              const rectH = totalH + 2 - LABEL_BORDER_WIDTH;
+              const rectX = labelCx - halfW + LABEL_BORDER_WIDTH / 2;
+              const rectY = labelCy - totalH / 2 - LABEL_PAD_Y / 2 + LABEL_BORDER_WIDTH / 2;
+              const rectW = maxW + LABEL_PAD_X - LABEL_BORDER_WIDTH;
+              const rectH = totalH + LABEL_PAD_Y - LABEL_BORDER_WIDTH;
               ctx.fillStyle = '#f8fafc';
               ctx.fillRect(rectX, rectY, rectW, rectH);
               ctx.fillStyle = hexToRgba(color, 0.18);
@@ -1326,8 +1324,9 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               ctx.strokeRect(rectX, rectY, rectW, rectH);
 
               ctx.fillStyle = darkenHex(color);
-              const startY = labelY - (lines.length - 1) * lineH / 2;
-              lines.forEach((line, i) => ctx.fillText(line, labelX + 2, startY + i * lineH));
+              const textStartX = labelCx - maxW / 2;
+              const textStartY = labelCy - (lines.length - 1) * lineH / 2;
+              lines.forEach((line, i) => ctx.fillText(line, textStartX, textStartY + i * lineH));
               ctx.restore();
             }}
             nodeCanvasObjectMode={() => 'replace'}
@@ -1343,8 +1342,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               nodeLayouts.current = layouts;
             }}
             onEngineStop={() => {
-              if (isDragging.current) return;
-              engineRunning.current = false;
               const liveNodes = syncGraphNodePositions(graphRef.current, graphData.nodes as any[]);
               const check = enforceFixedRingDistances(liveNodes as any[]);
               if (check.maxDelta > 0.001) {
@@ -1356,40 +1353,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 setTimeout(() => graphRef.current?.zoomToFit(400, 60), 50);
               }
             }}
-            onNodeDragStart={() => {
-              isDragging.current = true;
-              engineRunning.current = true;
-              // 拖曳前存下所有節點當前位置，並清零殘留速度避免非拖曳節點漂移
-              const snap = new Map<string, { x: number; y: number }>();
-              (graphRef.current?.graphData()?.nodes ?? []).forEach((n: any) => {
-                if (n.x != null && n.y != null) snap.set(n.id, { x: n.x, y: n.y });
-                n.vx = 0; n.vy = 0;
-              });
-              savedPositions.current = snap;
-              // 凍結力模擬，避免拖曳期間牽動其他節點
-              graphRef.current?.d3Force('charge')?.strength(0);
-              graphRef.current?.d3Force('link')?.strength(0);
-              graphRef.current?.d3Force('collision')?.strength(0);
-              graphRef.current?.d3Force('x')?.strength(0);
-              graphRef.current?.d3Force('y')?.strength(0);
-            }}
-            onNodeDragEnd={() => {
-              isDragging.current = false;
-              engineRunning.current = false;
-              // 還原所有節點到拖曳前位置，不重跑模擬
-              (graphRef.current?.graphData()?.nodes ?? []).forEach((n: any) => {
-                const saved = savedPositions.current.get(n.id);
-                if (saved) {
-                  n.x = saved.x;
-                  n.y = saved.y;
-                  n.fx = saved.x;
-                  n.fy = saved.y;
-                  n.vx = 0;
-                  n.vy = 0;
-                }
-              });
-              enforceFixedRingDistances(graphRef.current?.graphData()?.nodes ?? []);
-            }}
             onNodeClick={(node: any, event: MouseEvent) => {
               const id = node.id as string;
               if (event.ctrlKey || event.metaKey) {
@@ -1400,9 +1363,9 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               if (typeof node.angle === 'number') {
                 savedAngles.current.set(id, node.angle);
               }
+              focusTriggerRef.current = true;
               focusLayoutRequest.current = id;
               setFocusedNodeId(id);
-              setLayoutRevision(current => current + 1);
               onNodeClick?.(id);
             }}
             onNodeRightClick={(node: any, event: MouseEvent) => {
@@ -1418,7 +1381,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               focusLayoutRequest.current = null;
               setHoverNodeId(null);
             }}
-            cooldownTicks={60}
+            cooldownTicks={1}
             enableNodeDrag={false}
             enableZoomInteraction
             nodeLabel="name"
