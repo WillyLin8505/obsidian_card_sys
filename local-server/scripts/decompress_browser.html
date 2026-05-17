@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LZ-String Decompressor</title>
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+</head>
+<body>
+  <h2>LZ-String DecompressFromBase64 Result</h2>
+  <pre id="raw" style="background:#f0f0f0;padding:12px;white-space:pre-wrap;word-break:break-all;max-width:95vw;"></pre>
+  <h2>Formatted JSON</h2>
+  <pre id="formatted" style="background:#e8f5e9;padding:12px;white-space:pre-wrap;word-break:break-all;max-width:95vw;"></pre>
+  <script>
+    const data = 'N4IgLgngDgpiBcIYA8DGBDANgSwCYCd0B3EAGhADcZ8BnbAewDsEAmcm+gV31TkQAswYKDXgB6MQHNsYfpwBGAOlT0AtmIBeNCtlQbs6RmPry6uA4wC0KDDgLFLUTJ2lH8MTDHQ0YNMWHRJMRZFAEYADkUAZjIkT1UYRjAaBABtAF1ydCgoAGUAsD5QSXw8XOwNPkZOTExyHRgiACF0VABrEq5GXABhekx6fAQQAGIAMwnJkABfaaA=';
+    const result = LZString.decompressFromBase64(data);
+    document.getElementById('raw').textContent = result || '(empty/null result)';
+    if (result) {
+      try {
+        const parsed = JSON.parse(result);
+        document.getElementById('formatted').textContent = JSON.stringify(parsed, null, 2);
+      } catch (e) {
+        document.getElementById('formatted').textContent = 'Not valid JSON: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>

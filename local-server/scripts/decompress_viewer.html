@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><title>LZ-String Decompressor</title></head>
+<body>
+<h2>Decompressed Excalidraw JSON</h2>
+<pre id="output" style="background:#f5f5f5;padding:16px;border-radius:8px;overflow:auto;max-height:90vh;font-size:14px;">Loading...</pre>
+<script>
+const keyStr="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+function gv(a,c){return a.indexOf(c)}
+function dc(len,rv,gnv){const d=[];let ei=4,ds=4,nb=3,en="",r=[],w,b,rb,mp,pw,c;const dt={val:gnv(0),position:rv,index:1};for(let i=0;i<3;i++)d[i]=i;b=0;mp=4;pw=1;while(pw!==mp){rb=dt.val&dt.position;dt.position>>=1;if(dt.position===0){dt.position=rv;dt.val=gnv(dt.index++)}b|=(rb>0?1:0)*pw;pw<<=1}switch(b){case 0:b=0;mp=256;pw=1;while(pw!==mp){rb=dt.val&dt.position;dt.position>>=1;if(dt.position===0){dt.position=rv;dt.val=gnv(dt.index++)}b|=(rb>0?1:0)*pw;pw<<=1}c=String.fromCharCode(b);break;case 1:b=0;mp=65536;pw=1;while(pw!==mp){rb=dt.val&dt.position;dt.position>>=1;if(dt.position===0){dt.position=rv;dt.val=gnv(dt.index++)}b|=(rb>0?1:0)*pw;pw<<=1}c=String.fromCharCode(b);break;case 2:return""}d[3]=c;w=c;r.push(c);while(true){if(dt.index>len)return"";b=0;mp=Math.pow(2,nb);pw=1;while(pw!==mp){rb=dt.val&dt.position;dt.position>>=1;if(dt.position===0){dt.position=rv;dt.val=gnv(dt.index++)}b|=(rb>0?1:0)*pw;pw<<=1}switch(c=b){case 0:b=0;mp=256;pw=1;while(pw!==mp){rb=dt.val&dt.position;dt.position>>=1;if(dt.position===0){dt.position=rv;dt.val=gnv(dt.index++)}b|=(rb>0?1:0)*pw;pw<<=1}d[ds++]=String.fromCharCode(b);c=ds-1;ei--;break;case 1:b=0;mp=65536;pw=1;while(pw!==mp){rb=dt.val&dt.position;dt.position>>=1;if(dt.position===0){dt.position=rv;dt.val=gnv(dt.index++)}b|=(rb>0?1:0)*pw;pw<<=1}d[ds++]=String.fromCharCode(b);c=ds-1;ei--;break;case 2:return r.join("")}if(ei===0){ei=Math.pow(2,nb);nb++}if(d[c]){en=d[c]}else{if(c===ds){en=w+w.charAt(0)}else{return null}}r.push(en);d[ds++]=w+en.charAt(0);ei--;if(ei===0){ei=Math.pow(2,nb);nb++}w=en}};
+
+const compressed='N4IgLgngDgpiBcIYA8DGBDANgSwCYCd0B3EAGhADcZ8BnbAewDsEAmcm+gV31TkQAswYKDXgB6MQHNsYfpwBGAOlT0AtmIBeNCtlQbs6RmPry6uA4wC0KDDgLFLUTJ2lH8MTDHQ0YNMWHRJMRZFAEYADkUWMiRPVRhGMBoEAG0AXXJ0KCgAZQCwPlBJfDwc7A0+Rk5MTHIdGCIAIXRUAGtirkZcAGF6THp8BBAAYgAzcYmQAF8poA===';
+const result=dc(compressed.length,32,function(i){return gv(keyStr,compressed.charAt(i))});
+
+const el=document.getElementById('output');
+if(result){
+  try{
+    const parsed=JSON.parse(result);
+    el.textContent=JSON.stringify(parsed,null,2);
+  }catch(e){
+    el.textContent=result;
+  }
+}else{
+  el.textContent='Decompression failed';
+}
+</script>
+</body>
+</html>

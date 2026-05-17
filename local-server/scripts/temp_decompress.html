@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head><title>LZ-String Decompress</title></head>
+<body>
+<h2>LZ-String Decompression Result</h2>
+<pre id="output" style="white-space:pre-wrap; word-break:break-all; background:#f0f0f0; padding:16px; font-size:14px;"></pre>
+<script>
+const keyStrBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+function getBaseValue(a, c) { return a.indexOf(c); }
+function _decompress(length, resetValue, getNextValue) {
+  const dictionary = []; let enlargeIn = 4, dictSize = 4, numBits = 3, entry = "", result = [], w, bits, resb, maxpower, power, c;
+  const data = { val: getNextValue(0), position: resetValue, index: 1 };
+  for (let i = 0; i < 3; i++) dictionary[i] = i;
+  bits = 0; maxpower = Math.pow(2, 2); power = 1;
+  while (power !== maxpower) { resb = data.val & data.position; data.position >>= 1; if (data.position === 0) { data.position = resetValue; data.val = getNextValue(data.index++); } bits |= (resb > 0 ? 1 : 0) * power; power <<= 1; }
+  switch (bits) {
+    case 0: bits = 0; maxpower = Math.pow(2, 8); power = 1; while (power !== maxpower) { resb = data.val & data.position; data.position >>= 1; if (data.position === 0) { data.position = resetValue; data.val = getNextValue(data.index++); } bits |= (resb > 0 ? 1 : 0) * power; power <<= 1; } c = String.fromCharCode(bits); break;
+    case 1: bits = 0; maxpower = Math.pow(2, 16); power = 1; while (power !== maxpower) { resb = data.val & data.position; data.position >>= 1; if (data.position === 0) { data.position = resetValue; data.val = getNextValue(data.index++); } bits |= (resb > 0 ? 1 : 0) * power; power <<= 1; } c = String.fromCharCode(bits); break;
+    case 2: return "";
+  }
+  dictionary[3] = c; w = c; result.push(c);
+  while (true) {
+    if (data.index > length) return "";
+    bits = 0; maxpower = Math.pow(2, numBits); power = 1;
+    while (power !== maxpower) { resb = data.val & data.position; data.position >>= 1; if (data.position === 0) { data.position = resetValue; data.val = getNextValue(data.index++); } bits |= (resb > 0 ? 1 : 0) * power; power <<= 1; }
+    switch (c = bits) {
+      case 0: bits = 0; maxpower = Math.pow(2, 8); power = 1; while (power !== maxpower) { resb = data.val & data.position; data.position >>= 1; if (data.position === 0) { data.position = resetValue; data.val = getNextValue(data.index++); } bits |= (resb > 0 ? 1 : 0) * power; power <<= 1; } dictionary[dictSize++] = String.fromCharCode(bits); c = dictSize - 1; enlargeIn--; break;
+      case 1: bits = 0; maxpower = Math.pow(2, 16); power = 1; while (power !== maxpower) { resb = data.val & data.position; data.position >>= 1; if (data.position === 0) { data.position = resetValue; data.val = getNextValue(data.index++); } bits |= (resb > 0 ? 1 : 0) * power; power <<= 1; } dictionary[dictSize++] = String.fromCharCode(bits); c = dictSize - 1; enlargeIn--; break;
+      case 2: return result.join("");
+    }
+    if (enlargeIn === 0) { enlargeIn = Math.pow(2, numBits); numBits++; }
+    if (dictionary[c]) { entry = dictionary[c]; } else { if (c === dictSize) { entry = w + w.charAt(0); } else { return null; } }
+    result.push(entry);
+    dictionary[dictSize++] = w + entry.charAt(0); enlargeIn--;
+    if (enlargeIn === 0) { enlargeIn = Math.pow(2, numBits); numBits++; }
+    w = entry;
+  }
+}
+function decompressFromBase64(input) {
+  if (input == null) return ""; if (input === "") return null;
+  return _decompress(input.length, 32, function (index) { return getBaseValue(keyStrBase64, input.charAt(index)); });
+}
+
+const compressed = "N4IgLgngDgpiBcIYA8DGBDANgSwCYCd0B3EAGhADcZ8BnbAewDsEAmcm+gV31TkQAswYKDXgB6MQHNsYfpwBGAOlT0AtmIBeNCtlQbs6RmPry6uA4wC0KDDgLFLUTJ2lH8MTDHQ0YNMWHRJMRZFAEYADkUWMiRPVRhGMBoEAG0AXXJ0KCgAZQCwPlBJfDwc7A0+Rk5MTHIdGCIAIXRUAGtirkZcAGF6THp8BBAAYgAzcYmQAF8poA===";
+
+const result = decompressFromBase64(compressed);
+const el = document.getElementById("output");
+
+if (!result) {
+  el.textContent = "Decompression failed - returned null/empty";
+} else {
+  let output = "=== RAW DECOMPRESSED LENGTH: " + result.length + " ===\n\n";
+  try {
+    const data = JSON.parse(result);
+    output += "=== SUCCESSFULLY PARSED JSON ===\n\n";
+    const elements = data.elements || [];
+    const textElements = elements.filter(e => e.type === "text");
+    output += "TOTAL ELEMENTS: " + elements.length + "\n";
+    output += "TEXT ELEMENTS: " + textElements.length + "\n\n";
+    if (textElements.length > 0) {
+      output += "=== TEXT CONTENT ===\n";
+      textElements.forEach((te, i) => {
+        output += "  [" + (i+1) + "] " + (te.text || te.originalText || "") + "\n";
+      });
+      output += "\n";
+    }
+    const typeCounts = {};
+    elements.forEach(e => { typeCounts[e.type] = (typeCounts[e.type] || 0) + 1; });
+    output += "=== ELEMENT TYPE SUMMARY ===\n";
+    Object.entries(typeCounts).sort((a,b) => b[1]-a[1]).forEach(([t,c]) => { output += "  " + t + ": " + c + "\n"; });
+    output += "\n=== FULL DECOMPRESSED JSON ===\n";
+    output += JSON.stringify(data, null, 2);
+  } catch (e) {
+    output += "=== NOT VALID JSON - RAW OUTPUT ===\n" + result;
+  }
+  el.textContent = output;
+}
+</script>
+</body>
+</html>
