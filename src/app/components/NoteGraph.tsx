@@ -988,21 +988,12 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       outMap.get(id)?.forEach(tid => addRelated(id, tid));
       inMap.get(id)?.forEach(src => addRelated(id, src));
     });
+    // Focused subtree = nodes this note directly links TO (outgoing).
+    // These are clustered near the clicked node when focus is active.
     const focusedSubtreeIds = new Set<string>();
     if (focusedNodeId && visibleIds.has(focusedNodeId)) {
-      focusedSubtreeIds.add(focusedNodeId);
-      visibleIds.forEach(id => {
-        if (id === focusedNodeId) return;
-        let current: string | undefined = id;
-        while (current) {
-          const parentId = nodeParent.get(current);
-          if (!parentId) break;
-          if (parentId === focusedNodeId) {
-            focusedSubtreeIds.add(id);
-            break;
-          }
-          current = parentId;
-        }
+      outMap.get(focusedNodeId)?.forEach(tid => {
+        if (visibleIds.has(tid)) focusedSubtreeIds.add(tid);
       });
     }
     const positions = new Map<string, RingPosition>();
@@ -1072,15 +1063,17 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         const savedAngle = savedAngles.current.get(id);
         if (typeof savedAngle === 'number') preferredAngles.set(id, savedAngle);
       });
-      let low = previousRadius + 10;
+      // Start radius must fit the entire ring's label circumference — this
+      // guarantees even-spaced fallback can never produce intra-ring overlaps.
+      const minCircumRadius = arcBudget / (2 * Math.PI);
+      let low = Math.max(previousRadius + 10, Math.ceil(minCircumRadius));
       let high = low;
       const maxSearchRadius = Math.max(
         high + Math.max(600, ring.length * 30),
         previousRadius + Math.max(120, ring.length * 10),
-        arcBudget / (2 * Math.PI) + 40,
+        minCircumRadius + 40,
       );
       let best = tryPlaceRingOnRadius(ring, d, high, baseObstacles, centerSet, undefined, false);
-      const fallback = scoreRingOnRadius(ring, d, high, baseObstacles, centerSet);
 
       for (let expand = 0; !best.success && high < maxSearchRadius && expand < 400; expand += 1) {
         low = high;
@@ -1100,9 +1093,9 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
           }
         }
       } else {
-        best = fallback.positions.size === ring.length
-          ? fallback
-          : placeRingFallback(ring, d, low, baseObstacles, centerSet);
+        // Fallback at max-searched radius with even spacing — circumference is
+        // guaranteed sufficient so no intra-ring overlap can occur.
+        best = placeRingFallback(ring, d, Math.max(high, minCircumRadius), baseObstacles, centerSet);
       }
 
       const arranged = tryPlaceRingOnRadius(ring, d, placedRingRadius(best.positions), baseObstacles, centerSet, preferredAngles, true);
