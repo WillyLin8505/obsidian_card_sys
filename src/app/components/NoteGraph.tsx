@@ -157,7 +157,7 @@ const LABEL_MAX_CHARS = 9;
 const LABEL_PAD_X = 4;
 const LABEL_PAD_Y = 2;
 const LABEL_COLLISION_PAD = 10;
-const FOCUSED_LABEL_COLLISION_PAD = 0;
+const FOCUSED_LABEL_COLLISION_PAD = LABEL_NODE_MIN_GAP;
 const LABEL_BORDER_WIDTH = 1;
 const LABEL_BLOCK_MIN_GAP = 1;
 const LABEL_NODE_MIN_GAP = 6;
@@ -801,13 +801,20 @@ function placeRingFallback(
   radius: number,
   baseObstacles: LayoutObstacle[],
   centerSet: Set<string>,
-  preferredAngles?: Map<string, number>,
 ) {
   const positions = new Map<string, RingPosition>();
   const obstacles = [...baseObstacles];
 
+  // Cumulative arc placement: each node receives exactly its labelArcRequirement
+  // arc-slot, guaranteeing the LABEL_COLLISION_PAD minimum between adjacent labels.
+  const arcReqs = ring.map(id => labelArcRequirement(noteName(id), depth, centerSet.has(id)));
+  let arcCursor = 0;
+
   ring.forEach((id, index) => {
-    const angle = preferredAngles?.get(id) ?? -Math.PI / 2 + (index / Math.max(1, ring.length)) * Math.PI * 2;
+    const arcReq = arcReqs[index];
+    const angle = -Math.PI / 2 + (arcCursor + arcReq / 2) / radius;
+    arcCursor += arcReq;
+
     const pos = ringPoint(angle, radius);
     const placement = placeLabel({
       id,
