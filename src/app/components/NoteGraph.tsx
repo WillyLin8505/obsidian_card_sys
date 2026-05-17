@@ -1070,10 +1070,11 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         const savedAngle = savedAngles.current.get(id);
         if (typeof savedAngle === 'number') preferredAngles.set(id, savedAngle);
       });
-      // Start radius must fit the entire ring's label circumference — this
-      // guarantees even-spaced fallback can never produce intra-ring overlaps.
+      // minCircumRadius = smallest ring that fits all labels around its full
+      // circumference. Used only as fallback floor, NOT as the search start —
+      // starting there would push rings unnecessarily far from the parent.
       const minCircumRadius = arcBudget / (2 * Math.PI);
-      let low = Math.max(previousRadius + 10, Math.ceil(minCircumRadius));
+      let low = previousRadius + 10;
       let high = low;
       const maxSearchRadius = Math.max(
         high + Math.max(600, ring.length * 30),
