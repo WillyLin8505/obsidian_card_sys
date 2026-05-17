@@ -156,11 +156,11 @@ type LayoutNodeLike = {
 const LABEL_MAX_CHARS = 9;
 const LABEL_PAD_X = 4;
 const LABEL_PAD_Y = 2;
+const LABEL_NODE_MIN_GAP = 6;
 const LABEL_COLLISION_PAD = 10;
 const FOCUSED_LABEL_COLLISION_PAD = LABEL_NODE_MIN_GAP;
 const LABEL_BORDER_WIDTH = 1;
 const LABEL_BLOCK_MIN_GAP = 1;
-const LABEL_NODE_MIN_GAP = 6;
 
 function nodeCircleRadius(depth: number, isCenter = false) {
   return isCenter ? 7 : Math.max(3, 6 - depth);
