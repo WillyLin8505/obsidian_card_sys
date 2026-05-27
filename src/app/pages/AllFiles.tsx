@@ -445,66 +445,65 @@ export function AllFiles() {
 
   return (
     <div
-      className="p-6"
+      className="px-3 py-4 md:p-6"
       ref={containerRef}
       style={{ userSelect: isSelecting ? 'none' : 'auto' }}
     >
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="mb-2">所有檔案與搜尋</h1>
-          <p className="text-gray-600">
-            {isObsidianMode ? '輸入問題後按 Enter 搜尋 Obsidian 筆記庫' : '搜尋並管理您的所有筆記'}
-          </p>
-          {selectedNotes.size > 0 && (
-            <p className="text-sm text-blue-600 mt-2">
-              已選取 {selectedNotes.size} 則筆記（拖曳選取）- 右鍵點擊以顯示操作選單
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="mb-4 md:mb-6 flex items-center justify-between gap-2">
+        <h1 className="text-lg md:text-2xl font-semibold">所有檔案</h1>
+        <div className="flex items-center gap-2 shrink-0">
           {isObsidianMode && (
-            <Button variant="outline" onClick={handleReload} disabled={isReloading} className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleReload} disabled={isReloading} className="flex items-center gap-1.5">
               <RefreshCw className={`size-4 ${isReloading ? 'animate-spin' : ''}`} />
-              重新載入
+              <span className="hidden md:inline">重新載入</span>
             </Button>
           )}
-          <Button onClick={() => handleCreateNote('fleet')} className="flex items-center gap-2">
-            <Plus className="size-5" />
-            創建閃念筆記
+          <Button size="sm" onClick={() => handleCreateNote('fleet')} className="flex items-center gap-1.5">
+            <Plus className="size-4" />
+            <span className="hidden md:inline">創建閃念筆記</span>
+            <span className="md:hidden">新增</span>
           </Button>
         </div>
       </div>
 
+      {selectedNotes.size > 0 && (
+        <p className="text-xs text-blue-600 mb-3">
+          已選取 {selectedNotes.size} 則筆記・長按顯示操作選單
+        </p>
+      )}
+
       {/* Search Bar */}
-      <div className="mb-6">
+      <div className="mb-4">
         <div className="flex gap-2">
           <div className="relative flex-1">
             {(qmdLoading || isExpandingQuery)
-              ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-blue-400 animate-spin" />
+              ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-blue-400 animate-spin" />
               : searchMode === 'semantic'
-                ? <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-purple-400" />
-                : <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-gray-400" />
+                ? <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-purple-400" />
+                : <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
             }
             <Input
               type="text"
-              placeholder={isObsidianMode ? '向 Obsidian 筆記庫提問，按 Enter 搜尋...' : '搜尋筆記（Enter 切換語義搜尋）...'}
+              placeholder={isObsidianMode ? '提問後按 Enter 搜尋...' : '搜尋筆記...'}
               value={searchTerm}
               onChange={(e) => handleSearchChange(e.target.value)}
               onKeyDown={handleSearchKeyDown}
-              className="pl-10"
+              className="pl-9 text-sm"
             />
           </div>
           <Button
             variant="outline"
+            size="sm"
             onClick={handleSuggestTags}
             disabled={!searchTerm.trim() || allTags.length === 0 || isSuggestingTags}
-            className="flex items-center gap-2 whitespace-nowrap"
+            className="shrink-0 px-2.5"
+            title="AI 建議標籤"
           >
             {isSuggestingTags
               ? <Loader2 className="size-4 animate-spin" />
               : <Sparkles className="size-4" />
             }
-            AI 建議標籤
+            <span className="hidden md:inline ml-1.5">AI 建議標籤</span>
           </Button>
         </div>
 
@@ -555,12 +554,12 @@ export function AllFiles() {
 
       {/* QMD Search Results (obsidian mode) */}
       {isObsidianMode && qmdResult && (
-        <div className="mb-6">
-          <div className="mb-4 text-sm text-gray-600">
+        <div className="mb-4">
+          <div className="mb-3 text-xs text-gray-500">
             找到 {qmdResult.chunks.length} 則相關筆記
-            {qmdResult.searchTime && <span className="ml-2 text-gray-400">({qmdResult.searchTime}ms)</span>}
+            {qmdResult.searchTime && <span className="ml-2">({qmdResult.searchTime}ms)</span>}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
             {qmdResult.chunks.map((chunk, i) => {
               const fileName = chunk.notePath.split('/').pop()?.replace('.md', '') || chunk.notePath;
               const cleanSnippet = chunk.content.replace(/^@@[^@]*@@[^\n]*\n?/, '').trim();
@@ -610,7 +609,7 @@ export function AllFiles() {
         <>
           {/* Tags Filter */}
           {allTags.length > 0 && (
-            <div className="mb-4 flex gap-8 text-sm">
+            <div className="mb-4 flex gap-5 text-xs overflow-x-auto pb-1">
               {(['1project', '2task', '3card'] as const).map(prefix => {
                 const catNode = tagTree.get(prefix);
                 if (!catNode) return null;
@@ -648,14 +647,14 @@ export function AllFiles() {
             </div>
           )}
 
-          <div className="mb-4 flex items-center justify-between">
-            <span className="text-sm text-gray-600 flex items-center gap-2">
-              共 {filteredNotes.length} 則筆記，顯示第 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredNotes.length)} 則
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="text-xs text-gray-500">
+              {filteredNotes.length} 則・第 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredNotes.length)}
             </span>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>上一頁</Button>
-              <span className="text-sm text-gray-500 self-center">{page + 1} / {Math.ceil(filteredNotes.length / PAGE_SIZE) || 1}</span>
-              <Button variant="outline" size="sm" disabled={(page + 1) * PAGE_SIZE >= filteredNotes.length} onClick={() => setPage(p => p + 1)}>下一頁</Button>
+            <div className="flex items-center gap-1.5">
+              <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)} className="h-7 px-2 text-xs">‹</Button>
+              <span className="text-xs text-gray-500">{page + 1}/{Math.ceil(filteredNotes.length / PAGE_SIZE) || 1}</span>
+              <Button variant="outline" size="sm" disabled={(page + 1) * PAGE_SIZE >= filteredNotes.length} onClick={() => setPage(p => p + 1)} className="h-7 px-2 text-xs">›</Button>
             </div>
           </div>
 
@@ -668,7 +667,7 @@ export function AllFiles() {
           {/* Notes Grid */}
           {filteredNotes.length > 0 && (
             <div
-              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none"
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 md:gap-4 select-none"
               style={{ paddingTop: virtualVisibleNotes.paddingTop, paddingBottom: virtualVisibleNotes.paddingBottom }}
             >
               {virtualVisibleNotes.items.map((note) => {

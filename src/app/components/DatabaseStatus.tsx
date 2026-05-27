@@ -17,6 +17,7 @@ export function DatabaseStatus() {
   const [status, setStatus] = useState<'checking' | 'healthy' | 'error'>('checking');
   const [message, setMessage] = useState('');
   const [showDetails, setShowDetails] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const isSupabase = getDataSource() === 'supabase';
 
   const checkDatabase = async () => {
@@ -84,7 +85,7 @@ export function DatabaseStatus() {
     }
   }, []);
 
-  if (!isSupabase) {
+  if (!isSupabase || dismissed) {
     return null;
   }
 
@@ -115,11 +116,19 @@ export function DatabaseStatus() {
         )}
         
         <div className="flex-1">
-          <h3 className={`font-medium mb-1 ${
-            status === 'error' ? 'text-red-900' : 'text-green-900'
-          }`}>
-            {status === 'error' ? '資料庫未初始化' : '資料庫運行正常'}
-          </h3>
+          <div className="flex items-start justify-between gap-2">
+            <h3 className={`font-medium mb-1 ${
+              status === 'error' ? 'text-red-900' : 'text-green-900'
+            }`}>
+              {status === 'error' ? '資料庫未初始化' : '資料庫運行正常'}
+            </h3>
+            <button
+              onClick={() => setDismissed(true)}
+              className={`shrink-0 text-lg leading-none ${status === 'error' ? 'text-red-400 hover:text-red-700' : 'text-green-400 hover:text-green-700'}`}
+            >
+              ×
+            </button>
+          </div>
           
           <p className={`text-sm mb-3 ${
             status === 'error' ? 'text-red-700' : 'text-green-700'
@@ -175,14 +184,6 @@ export function DatabaseStatus() {
           )}
         </div>
         
-        {status === 'healthy' && (
-          <button
-            onClick={() => setShowDetails(false)}
-            className="text-green-600 hover:text-green-800"
-          >
-            ×
-          </button>
-        )}
       </div>
     </div>
   );

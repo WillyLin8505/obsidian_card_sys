@@ -17,6 +17,17 @@ export default defineConfig({
     },
   },
 
+  server: {
+    allowedHosts: ['all', 'desktop-6o0unv6-2.taileefcfe.ts.net'],
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    },
+  },
+
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 
