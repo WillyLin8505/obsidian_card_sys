@@ -1,0 +1,12 @@
+llama-index
+llama-index-llms-ollama
+llama-index-embeddings-huggingface
+llama-index-retrievers-bm25
+llama-index-postprocessor-flag-embedding-reranker
+sentence-transformers
+FlagEmbedding
+rank_bm25
+torch
+watchdog
+uvicorn
+fastapi
