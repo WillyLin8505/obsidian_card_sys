@@ -3,8 +3,24 @@ node_modules/
 .env.local
 .env.*.local
 dist/
+coverage/
 .next/
 out/
 .DS_Store
 *.log
-node_modules
+*.Zone.Identifier
+
+# Python / local AI search environments
+__pycache__/
+*.py[cod]
+.venv/
+.venv-wsl/
+llama-search/.venv/
+llama-search/.venv-wsl/
+
+# Local generated indexes and scratch files
+llama-search/storage/
+local-server/scripts/temp_*
+local-server/scripts/*_temp.*
+local-server/scripts/__pycache__/
+local-server/bin/cloudflared
