@@ -792,18 +792,12 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       const category = limitedCategoryByNodeId[node.id as string];
       return category ? categoryRank.get(category) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
     };
-    for (let d = 0; d <= maxDepth; d++) {
-      const nodes = [...(nodesByDepth.get(d) ?? [])].sort((a: any, b: any) =>
-        nodeCategoryRank(a) - nodeCategoryRank(b)
-        || Number(a.y ?? 0) - Number(b.y ?? 0)
-        || String(a.name).localeCompare(String(b.name), 'zh-Hant'),
-      );
-      if (nodes.length === 0) continue;
-
+    const packColumn = (nodes: any[], x: number) => {
+      if (nodes.length === 0) return;
       let cursor = 0;
       nodes.forEach(node => {
         const h = labelBoxH(node);
-        positioned.set(node.id as string, { x: columnX[d] ?? 0, y: cursor + h / 2 });
+        positioned.set(node.id as string, { x, y: cursor + h / 2 });
         cursor += h + LABEL_BOX_GAP;
       });
       const first = positioned.get(nodes[0].id as string)!;
@@ -813,6 +807,39 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         const pos = positioned.get(node.id as string)!;
         positioned.set(node.id as string, { x: pos.x, y: pos.y - mid });
       });
+    };
+
+    const sortNodes = (nodes: any[]) =>
+      [...nodes].sort((a: any, b: any) =>
+        nodeCategoryRank(a) - nodeCategoryRank(b)
+        || Number(a.y ?? 0) - Number(b.y ?? 0)
+        || String(a.name).localeCompare(String(b.name), 'zh-Hant'),
+      );
+
+    for (let d = 0; d <= maxDepth; d++) {
+      packColumn(sortNodes(nodesByDepth.get(d) ?? []), columnX[d] ?? 0);
+    }
+
+    // Re-layout incoming nodes (depth < 0) so they don't overlap after category filtering.
+    const minDepth = Math.min(0, ...filtered.nodes.map((node: any) => node.depth as number));
+    if (minDepth < 0) {
+      const IN_GAP = 6;
+      const inColumnX: number[] = [0];
+      for (let d = 1; d <= Math.abs(minDepth); d++) {
+        const prevNodes = d === 1 ? (nodesByDepth.get(0) ?? []) : (nodesByDepth.get(-(d - 1)) ?? []);
+        const curNodes  = nodesByDepth.get(-d) ?? [];
+        const prevAbsD  = d === 1 ? 0 : d - 1;
+        const maxPrevR  = prevNodes.length > 0
+          ? Math.max(...prevNodes.map((n: any) => nodeCircleRadius(prevAbsD, n.isCenter as boolean) + (n.isCenter ? 3 : 0)))
+          : 10;
+        const maxCurRight = curNodes.length > 0
+          ? Math.max(...curNodes.map((n: any) => labelBoxRightOffset(n)))
+          : 60;
+        inColumnX.push(inColumnX[d - 1] - maxPrevR - IN_GAP - maxCurRight);
+      }
+      for (let d = 1; d <= Math.abs(minDepth); d++) {
+        packColumn(sortNodes(nodesByDepth.get(-d) ?? []), inColumnX[d] ?? 0);
+      }
     }
 
     return {
@@ -1040,6 +1067,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               width={dims.width}
               height={dims.height}
               backgroundColor="#f8fafc"
+              d3AlphaDecay={1}
               linkColor={(link: any) => {
                 if (!highlightIds) return '#94a3b8';
                 const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
