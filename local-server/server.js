@@ -2,8 +2,9 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 import healthRouter from './routes/health.js';
 import searchRouter from './routes/search.js';
 import notesRouter from './routes/notes.js';
@@ -13,6 +14,10 @@ import expandQueryRouter from './routes/expand-query.js';
 import enrichNoteRouter from './routes/enrich-note.js';
 import fetchUrlRouter from './routes/fetch-url.js';
 import enrichVaultRouter from './routes/enrich-vault.js';
+import classifyNoteTypesRouter from './routes/classify-note-types.js';
+import voiceChatRouter from './routes/voice-chat.js';
+import transcribeRouter from './routes/transcribe.js';
+import iosShareRouter from './routes/ios-share.js';
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -41,15 +46,35 @@ if (HOST === '0.0.0.0' && !hasVaultAllowlist) {
   process.exit(1);
 }
 
-// ── 自動啟動 Python search server ────────────────────────────────
-const VENV_PYTHON = join(__dirname, '../llama-search/.venv-wsl/bin/python');
-const SEARCH_SCRIPT = join(__dirname, '../llama-search/search_server.py');
+// ── Python search server lifecycle ────────────────────────────────
+const AUTO_START_SEARCH_SERVER = process.env.AUTO_START_SEARCH_SERVER !== 'false';
+function resolveServerPath(value, fallback) {
+  const candidate = value || fallback;
+  return isAbsolute(candidate) ? candidate : resolve(__dirname, candidate);
+}
+const SEARCH_SERVER_PYTHON = resolveServerPath(process.env.SEARCH_SERVER_PYTHON, '../llama-search/.venv-wsl/bin/python');
+const SEARCH_SERVER_SCRIPT = resolveServerPath(process.env.SEARCH_SERVER_SCRIPT, '../llama-search/search_server.py');
+const SEARCH_SERVER_CWD = resolveServerPath(process.env.SEARCH_SERVER_CWD, '../llama-search');
 
 let searchProc = null;
+let searchRestartTimer = null;
 
 function startSearchServer() {
-  searchProc = spawn(VENV_PYTHON, [SEARCH_SCRIPT], {
-    cwd: join(__dirname, '../llama-search'),
+  if (!AUTO_START_SEARCH_SERVER) {
+    console.log('[search-server] auto-start disabled by AUTO_START_SEARCH_SERVER=false');
+    return;
+  }
+  if (searchProc && !searchProc.killed) return;
+  if (!existsSync(SEARCH_SERVER_PYTHON) || !existsSync(SEARCH_SERVER_SCRIPT)) {
+    console.error(
+      '[search-server] auto-start skipped. Configure SEARCH_SERVER_PYTHON and SEARCH_SERVER_SCRIPT, ' +
+        'or set AUTO_START_SEARCH_SERVER=false when using an external search server.'
+    );
+    return;
+  }
+
+  searchProc = spawn(SEARCH_SERVER_PYTHON, [SEARCH_SERVER_SCRIPT], {
+    cwd: SEARCH_SERVER_CWD,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -57,9 +82,15 @@ function startSearchServer() {
   searchProc.stderr.on('data', (d) => process.stderr.write(`[search-server] ${d}`));
 
   searchProc.on('exit', (code, signal) => {
+    searchProc = null;
     if (signal !== 'SIGTERM' && signal !== 'SIGINT') {
       console.error(`[search-server] 意外退出 (code=${code})，3 秒後重啟...`);
-      setTimeout(startSearchServer, 3000);
+      if (!searchRestartTimer) {
+        searchRestartTimer = setTimeout(() => {
+          searchRestartTimer = null;
+          startSearchServer();
+        }, 3000);
+      }
     }
   });
 
@@ -71,6 +102,7 @@ startSearchServer();
 // Node 結束時一起關掉 Python server
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
+    if (searchRestartTimer) clearTimeout(searchRestartTimer);
     searchProc?.kill(sig);
     process.exit(0);
   });
@@ -87,9 +119,13 @@ app.use(express.json({ limit: '1mb' }));
 
 const rateLimitRules = [
   { prefix: '/fetch-url', windowMs: 60_000, max: 10 },
+  { prefix: '/ios-share', windowMs: 60_000, max: 8 },
+  { prefix: '/classify-note-types', windowMs: 60_000, max: 8 },
   { prefix: '/enrich-vault', windowMs: 10 * 60_000, max: 1 },
   { prefix: '/enrich-note', windowMs: 60_000, max: 5 },
   { prefix: '/notes/reload', windowMs: 60_000, max: 5 },
+  { prefix: '/transcribe', windowMs: 60_000, max: 30 },
+  { prefix: '/voice-chat', windowMs: 60_000, max: 30 },
   { prefix: '/search', windowMs: 60_000, max: 60 },
   { prefix: '/notes/asset', windowMs: 60_000, max: 300 },
   { prefix: '/notes', windowMs: 60_000, max: 120 },
@@ -139,6 +175,10 @@ app.use('/expand-query', expandQueryRouter);
 app.use('/enrich-note', enrichNoteRouter);
 app.use('/fetch-url', fetchUrlRouter);
 app.use('/enrich-vault', enrichVaultRouter);
+app.use('/classify-note-types', classifyNoteTypesRouter);
+app.use('/voice-chat', voiceChatRouter);
+app.use('/transcribe', transcribeRouter);
+app.use('/ios-share', iosShareRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

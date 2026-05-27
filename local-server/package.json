@@ -6,7 +6,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "notebooklm:start": "node scripts/start_notebooklm_mcp.js",
+    "app:gateway": "node app-gateway.js",
+    "app:tunnel": "./bin/cloudflared tunnel --url http://127.0.0.1:3020",
+    "youtube:watch": "node scripts/youtube_notebooklm_watch.js",
+    "youtube:watch:dry-run": "node scripts/youtube_notebooklm_watch.js --dry-run",
+    "ios-share:gateway": "node ios-share-gateway.js",
+    "ios-share:tunnel": "./bin/cloudflared tunnel --url http://127.0.0.1:3010",
+    "ios-share:simulate": "node scripts/ios_share_simulate.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

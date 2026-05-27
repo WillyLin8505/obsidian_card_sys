@@ -1,0 +1,15 @@
+{
+  "vaultPath": "/mnt/d/obsidian/Willy_2026",
+  "noteFolder": "YouTube 摘要",
+  "notebookLmApiUrl": "http://127.0.0.1:3000",
+  "notebookUrl": "",
+  "maxNewVideos": 3,
+  "summaryQuestion": "請用繁體中文整理剛新增的 YouTube 影片。請輸出：1. 核心摘要 2. 重要觀點 3. 可行動建議 4. 適合連結到的知識主題。",
+  "sources": [
+    {
+      "name": "Google Developers",
+      "channelId": "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+      "maxNewVideos": 1
+    }
+  ]
+}

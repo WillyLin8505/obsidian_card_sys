@@ -6,6 +6,7 @@ import { runAiCliText } from '../services/ai-cli.js';
 
 const router = Router();
 const MAX_TEXT_CHARS = 6000;
+const DEFAULT_NOTEBOOKLM_API_URL = 'http://127.0.0.1:3000';
 
 const DEFAULT_TEMPLATE_BODY = `## 來源資訊
 - 作者：
@@ -58,6 +59,211 @@ function parseOutput(raw, fallbackTitle) {
   const generatedTitle = titleMatch ? titleMatch[1].trim() : fallbackTitle;
   const content = titleMatch ? raw.replace(/^TITLE:\s*.+\n?\n?/, '').trim() : raw;
   return { generatedTitle, content };
+}
+
+function isYoutubeHost(hostname) {
+  const host = hostname.toLowerCase();
+  return host === 'youtu.be' || host.endsWith('.youtube.com') || host === 'youtube.com';
+}
+
+function extractYoutubeVideoId(parsedUrl) {
+  if (parsedUrl.hostname.toLowerCase() === 'youtu.be') {
+    return parsedUrl.pathname.split('/').filter(Boolean)[0] || '';
+  }
+
+  if (parsedUrl.searchParams.get('v')) return parsedUrl.searchParams.get('v');
+
+  const parts = parsedUrl.pathname.split('/').filter(Boolean);
+  const knownVideoPrefixes = new Set(['shorts', 'live', 'embed']);
+  if (knownVideoPrefixes.has(parts[0])) return parts[1] || '';
+  return '';
+}
+
+function normalizeYoutubeVideoUrl(parsedUrl) {
+  const videoId = extractYoutubeVideoId(parsedUrl);
+  return videoId ? `https://www.youtube.com/watch?v=${videoId}` : parsedUrl.toString();
+}
+
+async function fetchYoutubeTitle(videoUrl) {
+  try {
+    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`, {
+      headers: { 'User-Agent': 'CardBoxNoteManagement/1.0' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return '';
+    const data = await res.json().catch(() => ({}));
+    return data.title || '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizeBaseUrl(url) {
+  return String(url || '').replace(/\/$/, '');
+}
+
+function normalizeNotebookUrl(url) {
+  try {
+    const parsedUrl = new URL(url);
+    parsedUrl.searchParams.delete('addSource');
+    return parsedUrl.toString();
+  } catch {
+    return url;
+  }
+}
+
+async function postNotebookLm(path, body) {
+  const baseUrl = normalizeBaseUrl(process.env.NOTEBOOKLM_API_URL || DEFAULT_NOTEBOOKLM_API_URL);
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(180000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error || `NotebookLM ${path} failed (HTTP ${res.status})`);
+  }
+  return data;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function notebookNameForVideo(videoTitle) {
+  const base = (videoTitle || 'YouTube 影片摘要')
+    .replace(/[/\\:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  return `影片摘要 - ${base}`;
+}
+
+function emitYoutubeProgress(onProgress, progress, stage, label) {
+  onProgress?.({ progress, stage, label });
+}
+
+async function createNotebookForYoutube(videoTitle, elapsed, onProgress) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      emitYoutubeProgress(
+        onProgress,
+        attempt > 0 ? 30 : 24,
+        'notebook',
+        attempt > 0 ? '重新建立 NotebookLM 筆記本' : '建立 NotebookLM 筆記本'
+      );
+      const result = await postNotebookLm('/notebooks/create', {
+        name: notebookNameForVideo(videoTitle),
+      });
+      const notebookUrl = result.data?.notebook_url || result.notebook_url;
+      if (!notebookUrl) {
+        throw new Error('NotebookLM 建立新 notebook 後沒有回傳 notebook_url');
+      }
+      elapsed(`NotebookLM notebook created${attempt > 0 ? ` after retry ${attempt}` : ''}`);
+      emitYoutubeProgress(onProgress, 40, 'notebook', 'NotebookLM 筆記本已建立');
+      return normalizeNotebookUrl(notebookUrl);
+    } catch (err) {
+      lastError = err;
+      console.warn(`[fetch-url] NotebookLM create notebook retry ${attempt + 1}: ${err.message}`);
+      if (attempt === 0) await sleep(5000);
+    }
+  }
+  throw lastError;
+}
+
+function buildYoutubePrompt(videoTitle, videoUrl, templateBody) {
+  const template = (templateBody || DEFAULT_TEMPLATE_BODY).trim();
+  return [
+    '請用繁體中文整理這支 YouTube 影片，並把結果填入文獻筆記模板。',
+    '',
+    '第一行請輸出筆記標題，格式：',
+    'TITLE: [10字以內的繁體中文標題，反映影片核心主題]',
+    '',
+    '接著只輸出模板內容，不要開場白、不要結語。',
+    '',
+    '模板填寫規則：',
+    `- 來源資訊中的標題填入：${videoTitle || '影片標題'}`,
+    `- 來源資訊中的連結填入：${videoUrl}`,
+    '- 重點摘要請整理 3-5 個核心觀點。',
+    '- 若模板中有心得、摘錄、問題、行動項目，請根據影片內容填寫。',
+    '',
+    '影片資訊：',
+    `標題：${videoTitle || '未知'}`,
+    `連結：${videoUrl}`,
+    '',
+    '模板：',
+    template,
+  ].join('\n');
+}
+
+async function askNotebookLmWithRetry(body, elapsed, onProgress) {
+  const waits = [0, 8000, 15000];
+  let lastError;
+
+  for (let i = 0; i < waits.length; i++) {
+    if (waits[i] > 0) await sleep(waits[i]);
+    try {
+      emitYoutubeProgress(
+        onProgress,
+        i === 0 ? 72 : 78 + (i * 4),
+        'summary',
+        i === 0 ? '請 NotebookLM 產生摘要' : '等待 NotebookLM 讀取來源後重試摘要'
+      );
+      const answer = await postNotebookLm('/ask', body);
+      elapsed(`NotebookLM answer done${i > 0 ? ` after retry ${i}` : ''}`);
+      emitYoutubeProgress(onProgress, 94, 'summary', 'NotebookLM 摘要已完成');
+      return answer;
+    } catch (err) {
+      lastError = err;
+      const message = err.message || '';
+      if (!/source|summary|摘要|read|讀取|loading|process|處理/i.test(message) || i === waits.length - 1) {
+        throw err;
+      }
+      console.warn(`[fetch-url] NotebookLM ask retry ${i + 1}: ${message}`);
+    }
+  }
+
+  throw lastError;
+}
+
+async function summarizeYoutubeWithNotebookLm(parsedUrl, templateBody, elapsed, onProgress) {
+  const videoUrl = normalizeYoutubeVideoUrl(parsedUrl);
+  emitYoutubeProgress(onProgress, 8, 'video', '讀取 YouTube 影片資訊');
+  const videoTitle = await fetchYoutubeTitle(videoUrl);
+  elapsed('YouTube title resolved');
+  emitYoutubeProgress(onProgress, 18, 'video', videoTitle ? '影片資訊已讀取' : '影片資訊已準備');
+
+  const notebookUrl = await createNotebookForYoutube(videoTitle, elapsed, onProgress);
+  const common = { notebook_url: notebookUrl };
+
+  emitYoutubeProgress(onProgress, 48, 'source', '將影片加入 NotebookLM 來源');
+  await postNotebookLm('/content/sources', {
+    source_type: 'youtube',
+    url: videoUrl,
+    title: videoTitle || videoUrl,
+    ...common,
+  });
+  elapsed('NotebookLM source added');
+  emitYoutubeProgress(onProgress, 68, 'source', 'NotebookLM 已讀取影片來源');
+
+  const answer = await askNotebookLmWithRetry({
+    question: buildYoutubePrompt(videoTitle, videoUrl, templateBody),
+    source_format: 'none',
+    ...common,
+  }, elapsed, onProgress);
+
+  const raw = answer.data?.answer || answer.answer || JSON.stringify(answer.data || answer, null, 2);
+  const { generatedTitle, content } = parseOutput(raw.trim(), videoTitle || 'YouTube 影片');
+  emitYoutubeProgress(onProgress, 97, 'note', '整理文獻筆記內容');
+  return {
+    title: generatedTitle,
+    content,
+    sourceUrl: videoUrl,
+    notebookUrl,
+    via: 'notebooklm',
+  };
 }
 
 function extractText(html) {
@@ -127,6 +333,78 @@ async function fetchViaJina(url, elapsed) {
   return raw.slice(0, MAX_TEXT_CHARS);
 }
 
+function writeStreamMessage(res, message) {
+  if (!res.writableEnded) {
+    res.write(`${JSON.stringify(message)}\n`);
+  }
+}
+
+async function parsePublicUrlRequest(req, res) {
+  const { url } = req.body;
+  if (!url || typeof url !== 'string') {
+    res.status(400).json({ error: 'url is required' });
+    return null;
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    res.status(400).json({ error: '無效的網址格式' });
+    return null;
+  }
+
+  try {
+    await assertPublicHttpUrl(parsedUrl);
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+    return null;
+  }
+
+  return parsedUrl;
+}
+
+// POST /fetch-url/stream
+// Body: { url: string, templateBody?: string }
+// NDJSON events: { type: "progress", progress }, { type: "result", result }, { type: "error", error }
+router.post('/stream', async (req, res) => {
+  const { templateBody } = req.body;
+  const parsedUrl = await parsePublicUrlRequest(req, res);
+  if (!parsedUrl) return;
+
+  if (!isYoutubeHost(parsedUrl.hostname)) {
+    return res.status(422).json({ error: '串流進度目前只支援 YouTube 影片' });
+  }
+
+  res.status(200);
+  res.set({
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders?.();
+
+  const t0 = Date.now();
+  const elapsed = (label) => console.log(`[fetch-url] ${label}: ${Date.now() - t0}ms`);
+  const sendProgress = (progress) => writeStreamMessage(res, { type: 'progress', progress });
+
+  sendProgress({ progress: 2, stage: 'start', label: '開始處理影片連結' });
+  try {
+    const result = await summarizeYoutubeWithNotebookLm(parsedUrl, templateBody, elapsed, sendProgress);
+    console.log(`[fetch-url] total: ${Date.now() - t0}ms | notebooklm stream | title: ${result.title}`);
+    sendProgress({ progress: 100, stage: 'done', label: '影片摘要已完成' });
+    writeStreamMessage(res, { type: 'result', result });
+  } catch (err) {
+    console.error('[fetch-url] NotebookLM YouTube stream error:', err.message);
+    writeStreamMessage(res, {
+      type: 'error',
+      error: `NotebookLM 摘要失敗: ${err.message}。請確認 NotebookLM MCP/REST API 已啟動，並已登入 Google。`,
+    });
+  } finally {
+    res.end();
+  }
+});
+
 // POST /fetch-url
 // Body: { url: string, templateBody?: string }
 router.post('/', async (req, res) => {
@@ -149,6 +427,19 @@ router.post('/', async (req, res) => {
 
   const t0 = Date.now();
   const elapsed = (label) => console.log(`[fetch-url] ${label}: ${Date.now() - t0}ms`);
+
+  if (isYoutubeHost(parsedUrl.hostname)) {
+    try {
+      const result = await summarizeYoutubeWithNotebookLm(parsedUrl, templateBody, elapsed);
+      console.log(`[fetch-url] total: ${Date.now() - t0}ms | notebooklm | title: ${result.title}`);
+      return res.json(result);
+    } catch (err) {
+      console.error('[fetch-url] NotebookLM YouTube error:', err.message);
+      return res.status(502).json({
+        error: `NotebookLM 摘要失敗: ${err.message}。請確認 NotebookLM MCP/REST API 已啟動，並已登入 Google。`,
+      });
+    }
+  }
 
   // Fetch the page — try direct first, fall back to Jina Reader on bot-block
   let text;

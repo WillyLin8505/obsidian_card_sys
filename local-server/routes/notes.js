@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { readdir, readFile, stat, writeFile, mkdir, realpath } from 'fs/promises';
+import { readdir, readFile, stat, writeFile, mkdir, realpath, unlink } from 'fs/promises';
 import { join, extname, basename, dirname } from 'path';
 import { assertAllowedVault, resolveUserPath } from '../security.js';
 
@@ -100,9 +100,10 @@ function parseFrontmatter(content) {
   const titleMatch = raw.match(/^title:\s*(.+)$/m);
   if (titleMatch) meta.title = titleMatch[1].trim().replace(/^["']|["']$/g, '');
 
-  // tags (list format: "  - tag" or inline: "tags: [a, b]")
+  // tags: supports [a, b], block list, and plain "tags: value"
   const tagsInline = raw.match(/^tags:\s*\[([^\]]*)\]/m);
   const tagsBlock = raw.match(/^tags:\s*\n((?:\s+-\s*.+\n?)+)/m);
+  const tagsSingle = raw.match(/^tags:\s*(\S[^\n]*)/m);
   if (tagsInline) {
     meta.tags = tagsInline[1].split(',').map(t => t.trim()).filter(Boolean);
   } else if (tagsBlock) {
@@ -110,6 +111,8 @@ function parseFrontmatter(content) {
       .split('\n')
       .map(l => l.replace(/^\s+-\s*/, '').trim())
       .filter(Boolean);
+  } else if (tagsSingle) {
+    meta.tags = [tagsSingle[1].trim()];
   } else {
     meta.tags = [];
   }
@@ -127,6 +130,90 @@ function inferType(tags) {
   if (flat.includes('靈感') || flat.includes('fleet') || flat.includes('閃念')) return 'fleet';
   if (flat.includes('文獻') || flat.includes('source')) return 'source';
   return 'permanent';
+}
+
+function normalizeLinkTarget(value) {
+  try {
+    return decodeURIComponent(String(value || '').trim());
+  } catch {
+    return String(value || '').trim();
+  }
+}
+
+function stripMarkdownExt(value) {
+  return value.replace(/\.md$/i, '');
+}
+
+function cleanLogicalLink(value) {
+  return stripMarkdownExt(
+    normalizeLinkTarget(value)
+      .replace(/\\/g, '/')
+      .replace(/^\.?\//, '')
+      .replace(/^\[\[|\]\]$/g, '')
+      .replace(/^<|>$/g, '')
+      .split('|')[0]
+      .split(/[?#]/)[0]
+      .trim()
+  );
+}
+
+function parseNoteLinks(content) {
+  const links = [];
+  const add = (value) => {
+    const normalized = cleanLogicalLink(value);
+    if (normalized) links.push(normalized);
+  };
+
+  for (const match of content.matchAll(/\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g)) {
+    add(match[1]);
+  }
+
+  for (const match of content.matchAll(/(?<!!)\[([^\]\n]*)]\((<[^>\n]+>|[^)\n]+)\)/g)) {
+    const rawTarget = match[2].trim().replace(/^<|>$/g, '').split(/[?#]/)[0];
+    const target = normalizeLinkTarget(rawTarget);
+    const isLocal = !/^[a-z][a-z0-9+.-]*:/i.test(target) && (target.endsWith('.md') || !target.includes('/'));
+    if (!isLocal) continue;
+    add(target);
+  }
+
+  const frontmatter = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (frontmatter) {
+    const raw = frontmatter[1];
+    const fields = ['connect', 'connections', 'links', 'link', '連結'];
+    const fieldPattern = fields.map(field => field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const fieldRe = new RegExp(`^(${fieldPattern}):\\s*(.*)$`, 'gmi');
+    let match;
+    while ((match = fieldRe.exec(raw)) !== null) {
+      const rest = match[2].trim();
+      const addFrontmatterValue = (value) => {
+        const text = String(value || '').trim();
+        const wikiLinks = [...text.matchAll(/\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g)];
+        const markdownLinks = [...text.matchAll(/(?<!!)\[([^\]\n]*)]\((<[^>\n]+>|[^)\n]+)\)/g)];
+        if (wikiLinks.length > 0 || markdownLinks.length > 0) {
+          wikiLinks.forEach(link => add(link[1]));
+          markdownLinks.forEach(link => add(link[2]));
+          return;
+        }
+        add(text);
+      };
+      if (rest.startsWith('[') && rest.endsWith(']')) {
+        rest.slice(1, -1).split(',').forEach(addFrontmatterValue);
+      } else if (rest) {
+        addFrontmatterValue(rest);
+      }
+      const afterField = raw.slice(fieldRe.lastIndex);
+      const listMatch = afterField.match(/^\n((?:[ \t]+-[^\n]*\n?)*)/);
+      if (listMatch?.[1]) {
+        listMatch[1]
+          .split('\n')
+          .map(line => line.replace(/^[ \t]+-[ \t]*/, '').trim())
+          .filter(Boolean)
+          .forEach(addFrontmatterValue);
+      }
+    }
+  }
+
+  return [...new Set(links)];
 }
 
 async function walkMd(dir, files = []) {
@@ -202,7 +289,7 @@ function buildNoteFromFile(filePath, vaultPath, content, fileStat) {
     frontmatter: meta.frontmatter || {},
     type: inferType(meta.tags || []),
     tags: meta.tags || [],
-    links: [],
+    links: parseNoteLinks(content),
     createdAt: meta.createdAt || fileStat.birthtime.toISOString(),
     updatedAt: fileStat.mtime.toISOString(),
   };
@@ -452,6 +539,35 @@ router.put('/', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: `Cannot write file: ${err.message}` });
+  }
+});
+
+// DELETE /notes?vaultPath=<vaultPath>&relativePath=<relativePath> — 刪除筆記檔案
+router.delete('/', async (req, res) => {
+  const { vaultPath: bodyVaultPath, relativePath } = req.body;
+  if (!bodyVaultPath || !relativePath) {
+    return res.status(400).json({ error: 'vaultPath and relativePath are required' });
+  }
+
+  let vaultPath;
+  try {
+    vaultPath = await assertAllowedVault(bodyVaultPath);
+  } catch (err) {
+    return res.status(err.status || 403).json({ error: err.message });
+  }
+
+  const filePath = join(vaultPath, relativePath);
+  if (!await isWithinVault(vaultPath, filePath)) {
+    return res.status(403).json({ error: 'Path traversal not allowed' });
+  }
+
+  try {
+    await unlink(filePath);
+    invalidateCache(vaultPath);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.json({ ok: true }); // already gone
+    res.status(500).json({ error: `Cannot delete file: ${err.message}` });
   }
 });
 
