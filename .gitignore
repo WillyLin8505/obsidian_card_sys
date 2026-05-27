@@ -24,3 +24,6 @@ local-server/scripts/temp_*
 local-server/scripts/*_temp.*
 local-server/scripts/__pycache__/
 local-server/bin/cloudflared
+
+# Claude Code hook execution log
+.claude/hook-execution.jsonl
