@@ -265,6 +265,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   const desiredNodeLayoutRef = useRef(new Map<string, any>());
   const suppressNextClickRef = useRef(false);
   const mouseGraphPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
   const [dims, setDims] = useState({ width: 440, height: 300 });
   const [internalSliderDepth, setInternalSliderDepth] = useState(1);
   const sliderDepth = depth ?? internalSliderDepth;
@@ -310,6 +311,8 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   }, []);
 
   useEffect(() => {
+    // Touch devices use pinch-to-zoom natively via d3-zoom; the Ctrl+scroll handler is desktop-only.
+    if (isTouchDevice) return;
     const el = canvasWrapRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
@@ -326,7 +329,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     };
     el.addEventListener('wheel', handler, { passive: false, capture: true });
     return () => el.removeEventListener('wheel', handler, { capture: true });
-  }, []);
+  }, [isTouchDevice]);
 
   const { nameToId, noteIds } = useMemo(() => {
     const nameToId = new Map<string, string>();
@@ -1179,6 +1182,8 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 setHoverNodeId(null);
               }}
               onNodeDrag={(node: any) => {
+                // On touch devices, disable drag-to-connect to avoid conflicting with pan/zoom gestures.
+                if (isTouchDevice) return;
                 const sourceId = node.id as string;
                 const desired = desiredNodeLayoutRef.current.get(sourceId);
                 if (!desired) return;
@@ -1210,16 +1215,18 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 dragLineRef.current = null;
                 suppressNextClickRef.current = dragDistance > 4;
 
-                const nearest = visibleGraphData.nodes
-                  .filter((candidate: any) => candidate.id !== sourceId)
-                  .map((candidate: any) => ({
-                    id: candidate.id as string,
-                    distance: Math.hypot(dropX - Number(candidate.x ?? 0), dropY - Number(candidate.y ?? 0)),
-                  }))
-                  .sort((a, b) => a.distance - b.distance)[0];
+                if (!isTouchDevice) {
+                  const nearest = visibleGraphData.nodes
+                    .filter((candidate: any) => candidate.id !== sourceId)
+                    .map((candidate: any) => ({
+                      id: candidate.id as string,
+                      distance: Math.hypot(dropX - Number(candidate.x ?? 0), dropY - Number(candidate.y ?? 0)),
+                    }))
+                    .sort((a, b) => a.distance - b.distance)[0];
 
-                if (nearest && nearest.distance <= DROP_CONNECT_THRESHOLD) {
-                  onNodeConnect?.(sourceId, nearest.id);
+                  if (nearest && nearest.distance <= DROP_CONNECT_THRESHOLD) {
+                    onNodeConnect?.(sourceId, nearest.id);
+                  }
                 }
 
                 const desired = desiredNodeLayoutRef.current.get(sourceId);

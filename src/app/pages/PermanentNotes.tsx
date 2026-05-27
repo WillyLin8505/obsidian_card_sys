@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { parseFrontmatterValue } from '../utils/frontmatter';
 import { buildNoteContent } from '../utils/buildNoteContent';
 import { getCardFontSizes, makeMarkdownComponents } from '../utils/noteCardSizes';
+import { useIsMobile } from '../components/ui/use-mobile';
 
 const NoteGraph = lazy(() => import('../components/NoteGraph').then(module => ({ default: module.NoteGraph })));
 const LazyMarkdown = lazy(() => import('../components/LazyMarkdown').then(module => ({ default: module.LazyMarkdown })));
@@ -225,6 +226,7 @@ const QuickFleetNoteCreator = memo(function QuickFleetNoteCreator({
 export function PermanentNotes() {
   const navigate = useNavigate();
   const location = useLocation();
+  const isMobile = useIsMobile();
   const shouldUseNavSearchState = (() => {
     const state = location.state as { searchQuery?: string } | null;
     return Boolean(state?.searchQuery) && !hasConsumedPermanentNotesNav(location.key);
@@ -269,6 +271,7 @@ export function PermanentNotes() {
   const [graphHistory, setGraphHistory] = useState<NoteChip[][]>([]);
   const [graphSelectedNote, setGraphSelectedNote] = useState<Note | null>(null);
   const [graphSelectedMissingTitle, setGraphSelectedMissingTitle] = useState('');
+  const [mobileGraphPanelOpen, setMobileGraphPanelOpen] = useState(false);
   const [graphEditMode, setGraphEditMode] = useState(false);
   const graphEditContentRef = useRef('');
   const [graphSaving, setGraphSaving] = useState(false);
@@ -1462,13 +1465,14 @@ export function PermanentNotes() {
               size="icon"
               variant="ghost"
               className="size-8 shrink-0"
-              onClick={() => { setIsGraphExpanded(false); setGraphSelectedNote(null); setGraphSelectedMissingTitle(''); }}
+              onClick={() => { setIsGraphExpanded(false); setGraphSelectedNote(null); setGraphSelectedMissingTitle(''); setMobileGraphPanelOpen(false); }}
             >
               <X className="size-4" />
             </Button>
           </div>
-          <div className="flex-1 min-h-0 flex">
-            <div className="flex-1 min-w-0">
+          {/* Desktop: side-by-side | Mobile: graph full-width + bottom sheet */}
+          <div className={`flex-1 min-h-0 ${isMobile ? 'flex flex-col' : 'flex'}`}>
+            <div className={`min-w-0 ${isMobile ? 'flex-1' : 'flex-1'}`}>
               <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-gray-500">載入圖譜中...</div>}>
                 <NoteGraph
                   allNotes={allNotes}
@@ -1489,75 +1493,158 @@ export function PermanentNotes() {
                       setGraphSelectedNote(null);
                       setGraphSelectedMissingTitle(name || id.replace(/^missing:/, ''));
                     }
+                    if (isMobile) setMobileGraphPanelOpen(true);
                   }}
                   onNodeCtrlClick={setGraphCenterNote}
-                  onNodeConnect={handleGraphConnect}
+                  onNodeConnect={isMobile ? undefined : handleGraphConnect}
                 />
               </Suspense>
             </div>
-            <aside className="w-[420px] max-w-[34vw] min-w-[320px] shrink-0 border-l border-gray-200 bg-white flex flex-col">
-              <div className="shrink-0 border-b border-gray-200 px-4 py-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-gray-400">
-                    {currentGraphSelectedNote ? '點擊的筆記' : graphSelectedMissingTitle ? '未載入的節點' : '中心筆記'}
-                  </span>
-                  {graphPanelNote && graphEditMode ? (
-                    <Button
-                      size="sm"
-                      variant="default"
-                      disabled={graphSaving}
-                      onClick={handleGraphSave}
-                      className="h-6 text-xs px-2"
-                    >
-                      {graphSaving ? <Loader2 className="size-3 animate-spin mr-1" /> : <Save className="size-3 mr-1" />}
-                      儲存
-                    </Button>
-                  ) : graphPanelNote ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setGraphEditMode(true)}
-                      className="h-6 text-xs px-2"
-                    >
-                      編輯
-                    </Button>
-                  ) : null}
+
+            {/* Desktop sidebar */}
+            {!isMobile && (
+              <aside className="w-[420px] max-w-[34vw] min-w-[320px] shrink-0 border-l border-gray-200 bg-white flex flex-col">
+                <div className="shrink-0 border-b border-gray-200 px-4 py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-400">
+                      {currentGraphSelectedNote ? '點擊的筆記' : graphSelectedMissingTitle ? '未載入的節點' : '中心筆記'}
+                    </span>
+                    {graphPanelNote && graphEditMode ? (
+                      <Button
+                        size="sm"
+                        variant="default"
+                        disabled={graphSaving}
+                        onClick={handleGraphSave}
+                        className="h-6 text-xs px-2"
+                      >
+                        {graphSaving ? <Loader2 className="size-3 animate-spin mr-1" /> : <Save className="size-3 mr-1" />}
+                        儲存
+                      </Button>
+                    ) : graphPanelNote ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setGraphEditMode(true)}
+                        className="h-6 text-xs px-2"
+                      >
+                        編輯
+                      </Button>
+                    ) : null}
+                  </div>
+                  <h2 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
+                    {graphPanelTitle}
+                  </h2>
                 </div>
-                <h2 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
-                  {graphPanelTitle}
-                </h2>
+                {graphPanelNote ? (
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                    {graphEditMode ? (
+                      <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入編輯器...</div>}>
+                        <GraphNoteEditor
+                          noteId={graphPanelNote.id}
+                          initialContent={graphPanelNote.content}
+                          contentRef={graphEditContentRef}
+                          vaultPath={config.notePath}
+                        />
+                      </Suspense>
+                    ) : (
+                      <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入預覽...</div>}>
+                        <GraphNotePreview
+                          noteId={graphPanelNote.id}
+                          content={graphPanelNote.content}
+                          vaultPath={config.notePath}
+                        />
+                      </Suspense>
+                    )}
+                  </div>
+                ) : graphSelectedMissingTitle ? (
+                  <div className="flex-1 flex items-center justify-center px-6 text-center text-sm text-gray-400">
+                    這個節點目前不在已載入的筆記清單中，無法顯示內容。
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
+                    點擊圖譜節點以查看筆記內容
+                  </div>
+                )}
+              </aside>
+            )}
+
+            {/* Mobile bottom sheet */}
+            {isMobile && mobileGraphPanelOpen && (
+              <div className="shrink-0 border-t border-gray-200 bg-white flex flex-col" style={{ height: '45vh' }}>
+                <div className="shrink-0 border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-xs text-gray-400">
+                        {currentGraphSelectedNote ? '點擊的筆記' : graphSelectedMissingTitle ? '未載入的節點' : '中心筆記'}
+                      </span>
+                      {graphPanelNote && graphEditMode ? (
+                        <Button
+                          size="sm"
+                          variant="default"
+                          disabled={graphSaving}
+                          onClick={handleGraphSave}
+                          className="h-6 text-xs px-2"
+                        >
+                          {graphSaving ? <Loader2 className="size-3 animate-spin mr-1" /> : <Save className="size-3 mr-1" />}
+                          儲存
+                        </Button>
+                      ) : graphPanelNote ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setGraphEditMode(true)}
+                          className="h-6 text-xs px-2"
+                        >
+                          編輯
+                        </Button>
+                      ) : null}
+                    </div>
+                    <h2 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-1">
+                      {graphPanelTitle}
+                    </h2>
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0 ml-2"
+                    onClick={() => setMobileGraphPanelOpen(false)}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+                {graphPanelNote ? (
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                    {graphEditMode ? (
+                      <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入編輯器...</div>}>
+                        <GraphNoteEditor
+                          noteId={graphPanelNote.id}
+                          initialContent={graphPanelNote.content}
+                          contentRef={graphEditContentRef}
+                          vaultPath={config.notePath}
+                        />
+                      </Suspense>
+                    ) : (
+                      <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入預覽...</div>}>
+                        <GraphNotePreview
+                          noteId={graphPanelNote.id}
+                          content={graphPanelNote.content}
+                          vaultPath={config.notePath}
+                        />
+                      </Suspense>
+                    )}
+                  </div>
+                ) : graphSelectedMissingTitle ? (
+                  <div className="flex-1 flex items-center justify-center px-6 text-center text-sm text-gray-400">
+                    這個節點目前不在已載入的筆記清單中，無法顯示內容。
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
+                    點擊圖譜節點以查看筆記內容
+                  </div>
+                )}
               </div>
-              {graphPanelNote ? (
-                <div className="flex-1 min-h-0 overflow-y-auto">
-                  {graphEditMode ? (
-                    <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入編輯器...</div>}>
-                      <GraphNoteEditor
-                        noteId={graphPanelNote.id}
-                        initialContent={graphPanelNote.content}
-                        contentRef={graphEditContentRef}
-                        vaultPath={config.notePath}
-                      />
-                    </Suspense>
-                  ) : (
-                    <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入預覽...</div>}>
-                      <GraphNotePreview
-                        noteId={graphPanelNote.id}
-                        content={graphPanelNote.content}
-                        vaultPath={config.notePath}
-                      />
-                    </Suspense>
-                  )}
-                </div>
-              ) : graphSelectedMissingTitle ? (
-                <div className="flex-1 flex items-center justify-center px-6 text-center text-sm text-gray-400">
-                  這個節點目前不在已載入的筆記清單中，無法顯示內容。
-                </div>
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
-                  點擊圖譜節點以查看筆記內容
-                </div>
-              )}
-            </aside>
+            )}
           </div>
         </div>
       )}
