@@ -14,7 +14,6 @@ import { toast } from 'sonner';
 import { useDragSelect } from '../hooks/useDragSelect';
 import { getCardFontSizes } from '../utils/noteCardSizes';
 import { buildNoteContent } from '../utils/buildNoteContent';
-import { parseFrontmatterValue } from '../utils/frontmatter';
 import { NoteCard } from '../components/NoteCard';
 
 interface TagNode {
@@ -28,8 +27,8 @@ interface PreparedNote {
   id: string;
   title: string;
   tags: string[];
-  frontmatter: Record<string, string>;
-  content: string;
+  tagsLower: string[];
+  frontmatterText: string;
   searchText: string;
   updatedTime: number;
 }
@@ -40,28 +39,6 @@ interface SearchHit {
   reasons: string[];
 }
 
-interface VisibleNote {
-  note: Note;
-  preview: string;
-  metadata: Array<{ key: string; value: string }>;
-  hit?: SearchHit;
-}
-
-function makePreview(content: string): string {
-  return content
-    .replace(/^---\s*\n[\s\S]*?\n---\s*\n*/, '')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/\*\*|__|\*|_|~~|`/g, '')
-    .replace(/^[-*+]\s+/gm, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .trim()
-    .substring(0, 300);
-}
-
-function getMetadataValue(note: Note, key: string): string {
-  return note.frontmatter?.[key] || parseFrontmatterValue(note.content, key);
-}
-
 export function AllFiles() {
   const navigate = useNavigate();
   const [notes, setNotes] = useState<Note[]>([]);
@@ -70,12 +47,12 @@ export function AllFiles() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
   const [filteredNoteIds, setFilteredNoteIds] = useState<string[]>([]);
-  const [searchHits, setSearchHits] = useState<Map<string, SearchHit>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
   const searchWorkerRef = useRef<Worker | null>(null);
   const searchRequestIdRef = useRef(0);
+  const [workerReady, setWorkerReady] = useState(false);
 
   // QMD search state (obsidian mode)
   const [qmdResult, setQmdResult] = useState<AISearchResult | null>(null);
@@ -96,10 +73,6 @@ export function AllFiles() {
   const config = useMemo(() => storage.getConfig(), []);
   const isObsidianMode = config.dataSource === 'obsidian';
   const cardSizes = useMemo(() => getCardFontSizes(config), [config]);
-  const displayMetadataKeys = useMemo(
-    () => config.displayMetadataKeys.filter(key => key !== 'tags'),
-    [config.displayMetadataKeys]
-  );
 
   const {
     isSelecting,
@@ -114,7 +87,7 @@ export function AllFiles() {
       try {
         setLoading(true);
         const fetchedNotes = isObsidianMode && config.notePath
-          ? await localApi.getNotes(config.notePath, { summary: true })
+          ? await storage.getNotes({ summary: true })
           : await storage.getNotes();
         const sorted = sortByRecentActivity(fetchedNotes);
         setNotes(sorted);
@@ -136,7 +109,7 @@ export function AllFiles() {
     try {
       const vaultPath = config.notePath || '';
       if (!vaultPath) { toast.error('請先在設定頁面填寫 Obsidian Vault 路徑'); return; }
-      const freshNotes = await localApi.reloadNotes(vaultPath, { summary: true });
+      const freshNotes = await storage.reloadNotes({ summary: true });
       const freshSorted = sortByRecentActivity(freshNotes);
       setNotes(freshSorted);
       setFilteredNoteIds(freshSorted.map(n => n.id));
@@ -180,12 +153,16 @@ export function AllFiles() {
       id: note.id,
       title: note.title,
       tags: note.tags || [],
-      frontmatter: note.frontmatter || {},
-      content: note.content || '',
+      tagsLower: (note.tags || []).map(tag => tag.toLowerCase()),
+      frontmatterText: Object.values(note.frontmatter || {}).join(' ').toLowerCase(),
       searchText: (note.searchText || `${note.title} ${note.content}`).toLowerCase(),
       updatedTime: new Date(note.updatedAt).getTime() || new Date(note.createdAt).getTime() || 0,
     }));
   }, [notes]);
+  const searchIndexVersion = useMemo(
+    () => preparedNotes.map(note => `${note.id}:${note.updatedTime}`).join('\x00'),
+    [preparedNotes]
+  );
 
   const noteById = useMemo(() => {
     return new Map(notes.map(note => [note.id, note]));
@@ -196,12 +173,23 @@ export function AllFiles() {
 
     const worker = new Worker(new URL('../workers/notesSearch.worker.ts', import.meta.url), { type: 'module' });
     searchWorkerRef.current = worker;
+    setWorkerReady(true);
 
     return () => {
       worker.terminate();
       if (searchWorkerRef.current === worker) searchWorkerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const worker = searchWorkerRef.current;
+    if (!worker) return;
+    worker.postMessage({
+      type: 'index',
+      notes: preparedNotes,
+      indexVersion: searchIndexVersion,
+    });
+  }, [preparedNotes, searchIndexVersion, workerReady]);
 
   useEffect(() => {
     const requestId = ++searchRequestIdRef.current;
@@ -223,7 +211,6 @@ export function AllFiles() {
         })
         .map(note => note.id);
       setFilteredNoteIds(ids);
-      setSearchHits(new Map(ids.map(id => [id, { id, score: 0, reasons: [] }])));
     };
 
     if (!worker) {
@@ -234,7 +221,6 @@ export function AllFiles() {
     worker.onmessage = (event: MessageEvent<{ requestId: number; results: SearchHit[] }>) => {
       if (event.data.requestId === searchRequestIdRef.current) {
         setFilteredNoteIds(event.data.results.map(result => result.id));
-        setSearchHits(new Map(event.data.results.map(result => [result.id, result])));
       }
     };
     worker.onerror = () => {
@@ -242,8 +228,9 @@ export function AllFiles() {
     };
     const timer = window.setTimeout(() => {
       worker.postMessage({
+        type: 'search',
         requestId,
-        notes: preparedNotes,
+        indexVersion: searchIndexVersion,
         searchTerm,
         selectedTags,
         searchMode,
@@ -252,7 +239,7 @@ export function AllFiles() {
     }, 200);
 
     return () => window.clearTimeout(timer);
-  }, [preparedNotes, searchTerm, selectedTags, searchMode, expandedKeywords]);
+  }, [preparedNotes, searchIndexVersion, searchTerm, selectedTags, searchMode, expandedKeywords, workerReady]);
 
   const filteredNotes = useMemo(() => {
     return filteredNoteIds
@@ -260,18 +247,11 @@ export function AllFiles() {
       .filter((note): note is Note => Boolean(note));
   }, [filteredNoteIds, noteById]);
 
-  const visibleNotes = useMemo<VisibleNote[]>(() => {
-    return filteredNotes
-      .slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-      .map(note => ({
-        note,
-        preview: makePreview(note.content),
-        metadata: displayMetadataKeys
-          .map(key => ({ key, value: getMetadataValue(note, key) }))
-          .filter(item => Boolean(item.value)),
-        hit: searchHits.get(note.id),
-      }));
-  }, [filteredNotes, page, displayMetadataKeys, searchHits]);
+  const pageNotes = useMemo(
+    () => filteredNotes.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [filteredNotes, page]
+  );
+  const virtualVisibleNotes = { items: pageNotes, paddingTop: 0, paddingBottom: 0 };
 
   const handleQmdSearch = async (query: string) => {
     if (!query.trim()) {
@@ -421,7 +401,18 @@ export function AllFiles() {
       return;
     }
     try {
-      await Promise.all(Array.from(selectedNotes).map(id => storage.deleteNote(id)));
+      if (isObsidianMode && config.notePath) {
+        const noteMap = new Map(notes.map(n => [n.id, n]));
+        await Promise.all(
+          Array.from(selectedNotes).map(id => {
+            const note = noteMap.get(id);
+            const relativePath = note?.id ?? id;
+            return localApi.deleteNote(relativePath, config.notePath!);
+          })
+        );
+      } else {
+        await Promise.all(Array.from(selectedNotes).map(id => storage.deleteNote(id)));
+      }
       toast.success(`已刪除 ${selectedNotes.size} 則筆記`);
       setNotes(prev => prev.filter(n => !selectedNotes.has(n.id)));
       setSelectedNotes(new Set());
@@ -619,41 +610,41 @@ export function AllFiles() {
         <>
           {/* Tags Filter */}
           {allTags.length > 0 && (
-            <div className="mb-6">
-              <h3 className="mb-3">標籤篩選</h3>
-              <div className="flex gap-8 text-sm">
-                {Array.from(tagTree.values()).map(catNode => (
-                  <div key={catNode.fullPath} className="min-w-0">
-                    <div className="text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">
-                      {catNode.segment}
+            <div className="mb-4 flex gap-8 text-sm">
+              {(['1project', '2task', '3card'] as const).map(prefix => {
+                const catNode = tagTree.get(prefix);
+                if (!catNode) return null;
+                const label = prefix === '1project' ? 'Project' : prefix === '2task' ? 'Task' : 'Card';
+                const renderChildren = (nodes: Map<string, TagNode>, depth: number): React.ReactNode =>
+                  Array.from(nodes.values()).map(node => (
+                    <div key={node.fullPath}>
+                      <div
+                        style={{ paddingLeft: `${depth * 14}px` }}
+                        className={`flex items-center gap-1 py-0.5 ${
+                          node.isTag
+                            ? selectedTags.includes(node.fullPath)
+                              ? 'text-blue-700 font-medium cursor-pointer'
+                              : 'text-gray-700 hover:text-blue-600 cursor-pointer'
+                            : 'text-gray-500 pointer-events-none'
+                        }`}
+                        onClick={() => { if (node.isTag) toggleTag(node.fullPath); }}
+                      >
+                        {depth > 0 && <span className="text-gray-300 mr-0.5">└</span>}
+                        <span>{node.segment}</span>
+                        {node.isTag && selectedTags.includes(node.fullPath) && (
+                          <X className="size-3 ml-1 shrink-0" />
+                        )}
+                      </div>
+                      {renderChildren(node.children, depth + 1)}
                     </div>
-                    {(function renderChildren(nodes: Map<string, TagNode>, depth: number): React.ReactNode {
-                      return Array.from(nodes.values()).map(node => (
-                        <div key={node.fullPath}>
-                          <div
-                            style={{ paddingLeft: `${depth * 12}px` }}
-                            className={`flex items-center gap-1 py-0.5 rounded ${
-                              node.isTag
-                                ? selectedTags.includes(node.fullPath)
-                                  ? 'text-blue-700 font-medium cursor-pointer'
-                                  : 'text-gray-700 hover:text-blue-600 cursor-pointer'
-                                : 'text-gray-400 pointer-events-none'
-                            }`}
-                            onClick={() => { if (node.isTag) toggleTag(node.fullPath); }}
-                          >
-                            {depth > 0 && <span className="text-gray-300 mr-1">└</span>}
-                            <span>{node.segment}</span>
-                            {node.isTag && selectedTags.includes(node.fullPath) && (
-                              <X className="size-3 ml-1 flex-shrink-0" />
-                            )}
-                          </div>
-                          {renderChildren(node.children, depth + 1)}
-                        </div>
-                      ));
-                    })(catNode.children, 0)}
+                  ));
+                return (
+                  <div key={prefix} className="flex flex-col">
+                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">{label}</div>
+                    {renderChildren(catNode.children, 0)}
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
           )}
 
@@ -676,8 +667,11 @@ export function AllFiles() {
 
           {/* Notes Grid */}
           {filteredNotes.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
-              {visibleNotes.map(({ note }) => {
+            <div
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none"
+              style={{ paddingTop: virtualVisibleNotes.paddingTop, paddingBottom: virtualVisibleNotes.paddingBottom }}
+            >
+              {virtualVisibleNotes.items.map((note) => {
                 const isSelected = selectedNotes.has(note.id);
                 return (
                   <div

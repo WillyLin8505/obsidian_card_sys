@@ -9,7 +9,7 @@ import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Button } from '../components/ui/button';
-import { Search, Loader2, X, Sparkles, Link2, Link2Off, Save, Plus, Maximize2 } from 'lucide-react';
+import { Search, Loader2, X, Sparkles, Link2, Link2Off, Save, Plus, Maximize2, ArrowLeft, Undo2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { toast } from 'sonner';
 import { parseFrontmatterValue } from '../utils/frontmatter';
@@ -131,6 +131,17 @@ interface NoteChip {
   searchContent: string;
 }
 
+interface GraphConnectionUndo {
+  sourceId: string;
+  targetId: string;
+  sourceTitle: string;
+  targetTitle: string;
+  sourceName: string;
+  targetName: string;
+  removeSourceLink: boolean;
+  removeTargetLink: boolean;
+}
+
 interface GeneratedNote {
   model: string;
   title: string;
@@ -176,7 +187,7 @@ const QuickFleetNoteCreator = memo(function QuickFleetNoteCreator({
   };
 
   return (
-    <div className="mt-2 flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white p-2">
+    <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white p-2">
       <div className="flex items-center gap-2">
         <Input
           value={title}
@@ -205,7 +216,7 @@ const QuickFleetNoteCreator = memo(function QuickFleetNoteCreator({
         onChange={e => setContent(e.target.value)}
         onWheel={e => e.stopPropagation()}
         placeholder="閃念筆記模板內容"
-        className="mt-2 min-h-0 flex-1 resize-none overflow-y-auto font-mono text-xs"
+        className="mt-2 min-h-0 flex-1 resize-none overflow-y-auto font-mono text-xs [field-sizing:fixed]"
       />
     </div>
   );
@@ -255,10 +266,14 @@ export function PermanentNotes() {
   const [showGraph, setShowGraph] = useState(false);
   const [isGraphExpanded, setIsGraphExpanded] = useState(false);
   const [graphDepth, setGraphDepth] = useState(1);
+  const [graphHistory, setGraphHistory] = useState<NoteChip[][]>([]);
   const [graphSelectedNote, setGraphSelectedNote] = useState<Note | null>(null);
+  const [graphSelectedMissingTitle, setGraphSelectedMissingTitle] = useState('');
   const [graphEditMode, setGraphEditMode] = useState(false);
   const graphEditContentRef = useRef('');
   const [graphSaving, setGraphSaving] = useState(false);
+  const [lastGraphConnection, setLastGraphConnection] = useState<GraphConnectionUndo | null>(null);
+  const [graphUndoingConnection, setGraphUndoingConnection] = useState(false);
   const [manualQuery, setManualQuery] = useState(() => {
     try { return sessionStorage.getItem('pnotes_query') ?? ''; } catch { return ''; }
   });
@@ -367,6 +382,30 @@ export function PermanentNotes() {
     return result;
   };
 
+  const isSummaryNote = useCallback((note: Note | null | undefined): boolean => {
+    return Boolean(isObsidianMode && note?.searchText);
+  }, [isObsidianMode]);
+
+  const ensureFullNote = useCallback(async (noteOrId: Note | string): Promise<Note | null> => {
+    const id = typeof noteOrId === 'string' ? noteOrId : noteOrId.id;
+    const existing = typeof noteOrId === 'string'
+      ? allNotes.find(n => n.id === id)
+      : noteOrId;
+
+    if (!isObsidianMode || !config.notePath || (existing && !isSummaryNote(existing))) {
+      return existing ?? null;
+    }
+
+    const full = await localApi.getNoteByPath(id, config.notePath);
+    setAllNotes(prev => {
+      const updated = prev.map(note => note.id === id ? full : note);
+      setCachedNotes(updated);
+      return updated;
+    });
+    setGraphSelectedNote(prev => prev?.id === id ? full : prev);
+    return full;
+  }, [allNotes, config.notePath, isObsidianMode, isSummaryNote]);
+
   const sanitizeFilename = (title: string) =>
     title.replace(/[/\\:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
 
@@ -407,8 +446,8 @@ export function PermanentNotes() {
       if (withLink && noteChips.length > 0) {
         const baseName = filename.replace(/\.md$/, '');
         await Promise.all(noteChips.map(async chip => {
-          const chipNote = allNotes.find(n => n.id === chip.id);
-          if (!chipNote) return;
+        const chipNote = await ensureFullNote(chip.id);
+        if (!chipNote) return;
           const updated = addLink(chipNote.content, baseName);
           await localApi.updateNote(chip.id, cfg.notePath!, updated);
           setAllNotes(prev => { const u = prev.map(n => n.id === chip.id ? { ...n, content: updated } : n); setCachedNotes(u); return u; });
@@ -436,7 +475,12 @@ export function PermanentNotes() {
     const chipName = chipNote.id.split('/').pop()?.replace('.md', '') ?? chipNote.title;
     const linked = new Set<string>();
     allNotes.forEach(n => {
-      if (n.id !== chipNote.id && n.content.includes(`[[${chipName}]]`)) {
+      const hasIndexedLink = n.links?.some(link => (
+        link === chipNote.id ||
+        link === chipNote.title ||
+        link.replace(/\.md$/i, '') === chipName
+      ));
+      if (n.id !== chipNote.id && (hasIndexedLink || n.content.includes(`[[${chipName}]]`))) {
         linked.add(n.id);
       }
     });
@@ -454,8 +498,8 @@ export function PermanentNotes() {
       return;
     }
 
-    const chipNote = allNotes.find(n => n.id === noteChips[0].id);
-    const targetNote = allNotes.find(n => n.id === targetId);
+    const chipNote = await ensureFullNote(noteChips[0].id);
+    const targetNote = await ensureFullNote(targetId);
     if (!chipNote || !targetNote) {
       toast.error('找不到筆記內容，請重新載入');
       return;
@@ -502,6 +546,140 @@ export function PermanentNotes() {
     }
   };
 
+  const handleGraphConnect = useCallback(async (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    if (sourceId.startsWith('missing:') || targetId.startsWith('missing:')) {
+      toast.info('這個節點尚未載入為筆記，無法直接建立雙向連結');
+      return;
+    }
+
+    const cfg = storage.getConfig();
+    if (!cfg.notePath && cfg.dataSource === 'obsidian') {
+      toast.error('請先在設定中填寫 Vault 路徑');
+      return;
+    }
+
+    const sourceNote = await ensureFullNote(sourceId);
+    const targetNote = await ensureFullNote(targetId);
+    if (!sourceNote || !targetNote) {
+      toast.error('找不到筆記內容，請重新載入');
+      return;
+    }
+
+    const sourceName = sourceNote.id.split('/').pop()?.replace(/\.md$/i, '') ?? sourceNote.title;
+    const targetName = targetNote.id.split('/').pop()?.replace(/\.md$/i, '') ?? targetNote.title;
+    const nextSourceContent = addLink(sourceNote.content, targetName);
+    const nextTargetContent = addLink(targetNote.content, sourceName);
+    const addedSourceLink = nextSourceContent !== sourceNote.content;
+    const addedTargetLink = nextTargetContent !== targetNote.content;
+
+    if (nextSourceContent === sourceNote.content && nextTargetContent === targetNote.content) {
+      toast.info('這兩則筆記已經有雙向連結');
+      return;
+    }
+
+    try {
+      const now = new Date().toISOString();
+      if (cfg.dataSource === 'obsidian') {
+        await Promise.all([
+          localApi.updateNote(sourceNote.id, cfg.notePath, nextSourceContent),
+          localApi.updateNote(targetNote.id, cfg.notePath, nextTargetContent),
+        ]);
+      } else {
+        await Promise.all([
+          storage.updateNote(sourceNote.id, { content: nextSourceContent, updatedAt: now }),
+          storage.updateNote(targetNote.id, { content: nextTargetContent, updatedAt: now }),
+        ]);
+      }
+
+      setAllNotes(prev => {
+        const updated = prev.map(n => {
+          if (n.id === sourceNote.id) return { ...n, content: nextSourceContent, updatedAt: now };
+          if (n.id === targetNote.id) return { ...n, content: nextTargetContent, updatedAt: now };
+          return n;
+        });
+        setCachedNotes(updated);
+        return updated;
+      });
+      if (graphSelectedNote?.id === sourceNote.id) setGraphSelectedNote(prev => prev ? { ...prev, content: nextSourceContent, updatedAt: now } : prev);
+      if (graphSelectedNote?.id === targetNote.id) setGraphSelectedNote(prev => prev ? { ...prev, content: nextTargetContent, updatedAt: now } : prev);
+      setLastGraphConnection({
+        sourceId: sourceNote.id,
+        targetId: targetNote.id,
+        sourceTitle: sourceNote.title,
+        targetTitle: targetNote.title,
+        sourceName,
+        targetName,
+        removeSourceLink: addedSourceLink,
+        removeTargetLink: addedTargetLink,
+      });
+      invalidateResultsCaches();
+      toast.success('已建立雙向連結');
+    } catch (err: any) {
+      toast.error(`建立連結失敗: ${err.message}`);
+    }
+  }, [allNotes, ensureFullNote, graphSelectedNote?.id]);
+
+  const handleUndoGraphConnection = useCallback(async () => {
+    if (!lastGraphConnection) return;
+
+    const cfg = storage.getConfig();
+    if (!cfg.notePath && cfg.dataSource === 'obsidian') {
+      toast.error('請先在設定中填寫 Vault 路徑');
+      return;
+    }
+
+    const sourceNote = await ensureFullNote(lastGraphConnection.sourceId);
+    const targetNote = await ensureFullNote(lastGraphConnection.targetId);
+    if (!sourceNote || !targetNote) {
+      toast.error('找不到上一筆連線的筆記，請重新載入');
+      setLastGraphConnection(null);
+      return;
+    }
+
+    const nextSourceContent = lastGraphConnection.removeSourceLink
+      ? removeLink(sourceNote.content, lastGraphConnection.targetName)
+      : sourceNote.content;
+    const nextTargetContent = lastGraphConnection.removeTargetLink
+      ? removeLink(targetNote.content, lastGraphConnection.sourceName)
+      : targetNote.content;
+
+    setGraphUndoingConnection(true);
+    try {
+      const now = new Date().toISOString();
+      if (cfg.dataSource === 'obsidian') {
+        await Promise.all([
+          localApi.updateNote(sourceNote.id, cfg.notePath, nextSourceContent),
+          localApi.updateNote(targetNote.id, cfg.notePath, nextTargetContent),
+        ]);
+      } else {
+        await Promise.all([
+          storage.updateNote(sourceNote.id, { content: nextSourceContent, updatedAt: now }),
+          storage.updateNote(targetNote.id, { content: nextTargetContent, updatedAt: now }),
+        ]);
+      }
+
+      setAllNotes(prev => {
+        const updated = prev.map(n => {
+          if (n.id === sourceNote.id) return { ...n, content: nextSourceContent, updatedAt: now };
+          if (n.id === targetNote.id) return { ...n, content: nextTargetContent, updatedAt: now };
+          return n;
+        });
+        setCachedNotes(updated);
+        return updated;
+      });
+      if (graphSelectedNote?.id === sourceNote.id) setGraphSelectedNote(prev => prev ? { ...prev, content: nextSourceContent, updatedAt: now } : prev);
+      if (graphSelectedNote?.id === targetNote.id) setGraphSelectedNote(prev => prev ? { ...prev, content: nextTargetContent, updatedAt: now } : prev);
+      setLastGraphConnection(null);
+      invalidateResultsCaches();
+      toast.success('已取消上一筆拖曳連結');
+    } catch (err: any) {
+      toast.error(`取消連結失敗: ${err.message}`);
+    } finally {
+      setGraphUndoingConnection(false);
+    }
+  }, [allNotes, ensureFullNote, graphSelectedNote?.id, lastGraphConnection]);
+
   // ─────────────────────────────────────────────────────────────
 
   const removeFrontmatter = (content: string): string =>
@@ -528,6 +706,9 @@ export function PermanentNotes() {
   // Extract title + abstract + connect from YAML frontmatter,
   // falling back to markdown section headings if frontmatter fields are absent.
   const extractSearchContent = (note: Note): string => {
+    if (isSummaryNote(note) && note.searchText) {
+      return note.searchText;
+    }
     const parts: string[] = [note.title];
 
     // ── 1. Parse YAML frontmatter ──────────────────────────────
@@ -599,18 +780,52 @@ export function PermanentNotes() {
   const setGraphCenterNote = useCallback((id: string) => {
     const note = allNotes.find(n => n.id === id);
     if (!note) return;
+    const isSameGraph = noteChips.length === 1 && noteChips[0].id === id;
     const searchContent = extractSearchContent(note);
     const newChips = [{ id, title: note.title, searchContent }];
+    if (!isSameGraph && noteChips.length > 0) {
+      setGraphHistory(prev => [...prev, noteChips.map(chip => ({ ...chip }))].slice(-50));
+    }
     setNoteChips(newChips);
     setGraphSelectedNote(null);
+    setGraphSelectedMissingTitle('');
     runSearch(newChips, '');
-  }, [allNotes]);
+  }, [allNotes, noteChips]);
+
+  const handleGraphBack = useCallback(() => {
+    const previous = graphHistory[graphHistory.length - 1];
+    if (!previous) return;
+    const restored = previous.map(chip => ({ ...chip }));
+    setGraphHistory(prev => prev.slice(0, -1));
+    setNoteChips(restored);
+    setGraphSelectedNote(null);
+    setGraphSelectedMissingTitle('');
+    runSearch(restored, '');
+  }, [graphHistory]);
+
+  const currentGraphSelectedNote = useMemo(() => {
+    if (!graphSelectedNote) return null;
+    return allNotes.find(n => n.id === graphSelectedNote.id) ?? graphSelectedNote;
+  }, [allNotes, graphSelectedNote]);
+
+  const graphPanelNote = currentGraphSelectedNote ?? (graphSelectedMissingTitle ? null : expandedCenterNote);
+  const graphPanelTitle = currentGraphSelectedNote?.title
+    ?? graphSelectedMissingTitle
+    ?? expandedCenterNote?.title
+    ?? noteChips[0]?.title;
 
   useEffect(() => {
-    const note = graphSelectedNote ?? expandedCenterNote;
+    const note = graphPanelNote;
     graphEditContentRef.current = note?.content ?? '';
     setGraphEditMode(false);
-  }, [graphSelectedNote?.id, expandedCenterNote?.id]);
+  }, [graphPanelNote?.id]);
+
+  useEffect(() => {
+    if (!graphPanelNote || !isSummaryNote(graphPanelNote)) return;
+    ensureFullNote(graphPanelNote.id).catch(err => {
+      console.warn('[PermanentNotes] failed to load full graph note:', err.message);
+    });
+  }, [ensureFullNote, graphPanelNote, isSummaryNote]);
 
   useEffect(() => {
     const stateNotes = (location.state as { notes?: Note[] } | null)?.notes;
@@ -650,7 +865,7 @@ export function PermanentNotes() {
   const loadNotes = async () => {
     try {
       setLoading(true);
-      const notes = await storage.getNotes();
+      const notes = await storage.getNotes({ summary: isObsidianMode });
       const sorted = sortByRecentActivity(notes);
       setCachedNotes(sorted);
       setAllNotes(sorted);
@@ -843,6 +1058,7 @@ export function PermanentNotes() {
     setNoteChips([]);
     setManualQuery('');
     setSearchResults(null);
+    setGraphHistory([]);
     autoSearchedRef.current = false;
     try {
       sessionStorage.removeItem('pnotes_chips');
@@ -876,7 +1092,7 @@ export function PermanentNotes() {
     const searchContent = extractSearchContent(note);
 
     if (noteChips.some(c => c.id === note.id)) {
-      toast.info(`「${note.title}」已在搜尋列中`);
+      removeChip(note.id);
       return;
     }
 
@@ -909,7 +1125,12 @@ export function PermanentNotes() {
     setIsGenerating(true);
     setGeneratedNotes(null);
     try {
-      const chipNotes = allNotes.filter(n => noteChips.some(c => c.id === n.id || c.title === n.title));
+      const chipNotes = (await Promise.all(
+        noteChips.map(async chip => {
+          const note = allNotes.find(n => chip.id === n.id || chip.title === n.title);
+          return note ? ensureFullNote(note) : null;
+        })
+      )).filter((note): note is Note => Boolean(note));
       const notes = chipNotes.map(n => ({ title: n.title, content: n.content }));
       const results = await localApi.generateLinkedNotes(notes, selectedModels);
       setGeneratedCache(noteChips, selectedModels, results);
@@ -950,7 +1171,7 @@ export function PermanentNotes() {
   };
 
   const handleGraphSave = async () => {
-    const note = graphSelectedNote ?? expandedCenterNote;
+    const note = graphPanelNote;
     if (!note) return;
     setGraphSaving(true);
     try {
@@ -958,7 +1179,7 @@ export function PermanentNotes() {
       const content = graphEditContentRef.current;
       await storage.updateNote(note.id, { content, updatedAt: now });
       const updated = { ...note, content, updatedAt: now };
-      if (graphSelectedNote) setGraphSelectedNote(updated);
+      if (currentGraphSelectedNote) setGraphSelectedNote(updated);
       setAllNotes(prev => prev.map(n => n.id === note.id ? updated : n));
       invalidateNotesCache();
       toast.success('已儲存');
@@ -1038,57 +1259,14 @@ export function PermanentNotes() {
       <div className="flex gap-4 mb-4 items-stretch">
 
         {/* Left column — half the row */}
-        <div className="flex h-[600px] flex-1 min-w-0 flex-col">
-          {/* Search — chip input */}
-          <div className="flex gap-2 mb-2">
-            <div
-              className="flex-1 flex flex-wrap items-center gap-1.5 border border-input rounded-md px-3 py-1.5 min-h-[36px] bg-white focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0 cursor-text"
-              onClick={() => {
-                const input = document.getElementById('perm-search-input');
-                if (input) (input as HTMLInputElement).focus();
-              }}
-            >
-              <Search className="size-3.5 text-gray-400 flex-shrink-0" />
-              {noteChips.map(chip => (
-                <span
-                  key={chip.id}
-                  className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs font-medium px-2 py-0.5 rounded-full max-w-[200px]"
-                >
-                  <span className="truncate">{chip.title}</span>
-                  <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); removeChip(chip.id); }}
-                    className="flex-shrink-0 hover:text-blue-600 ml-0.5"
-                  >
-                    <X className="size-3" />
-                  </button>
-                </span>
-              ))}
-              <input
-                id="perm-search-input"
-                className="flex-1 min-w-[120px] outline-none text-sm bg-transparent py-0.5"
-                placeholder={noteChips.length === 0 ? '點擊筆記加入，或輸入關鍵字...' : '繼續加入...'}
-                value={manualQuery}
-                onChange={e => setManualQuery(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              />
-            </div>
-            <Button
-              size="sm"
-              onClick={handleSearch}
-              disabled={(noteChips.length === 0 && !manualQuery.trim()) || isSearching}
-            >
-              {isSearching ? <Loader2 className="size-3.5 animate-spin" /> : '搜尋'}
-            </Button>
-            {(searchResults !== null || noteChips.length > 0 || manualQuery.trim()) && (
-              <Button size="sm" variant="outline" onClick={clearSearch}>
-                <X className="size-3.5" />
-              </Button>
-            )}
-          </div>
+        <div className="flex h-[525px] flex-1 min-w-0 flex-col">
+          <QuickFleetNoteCreator
+            templateContent={fleetTemplateContent}
+            onCreate={handleCreateFleetNote}
+          />
 
           {/* Thinking Models + AI Button — compact */}
-          <div className="p-2 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="mt-2 p-2 bg-gray-50 rounded-lg border border-gray-200">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-medium text-gray-600 shrink-0">AI 連結</span>
               {THINKING_MODELS.map(model => (
@@ -1136,25 +1314,56 @@ export function PermanentNotes() {
               {isEnriching ? 'AI 填充中...' : `AI 填充連結（${noteChips[0].title}）`}
             </Button>
           )}
-
-          <QuickFleetNoteCreator
-            templateContent={fleetTemplateContent}
-            onCreate={handleCreateFleetNote}
-          />
         </div>
 
         {/* Right column — graph, ~half the row, flush to right edge */}
         <div
           className="flex-shrink-0 overflow-hidden flex"
           style={{
-            width: noteChips.length >= 1 ? 900 : 0,
+            width: noteChips.length >= 1 ? 600 : 0,
             opacity: noteChips.length >= 1 ? 1 : 0,
             transition: 'width 280ms ease, opacity 220ms ease',
           }}
         >
-          <div className="rounded-xl border border-gray-200 bg-slate-50 shadow-sm overflow-hidden flex flex-col" style={{ width: 900, height: 600 }}>
+          <div className="rounded-xl border border-gray-200 bg-slate-50 shadow-sm overflow-hidden flex flex-col" style={{ width: 600, height: 525 }}>
             <div className="px-3 py-1.5 border-b border-gray-200 flex items-center justify-between shrink-0">
-              <span className="text-xs font-medium text-gray-500 shrink-0">連結圖譜</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7 shrink-0"
+                      disabled={graphHistory.length === 0}
+                      onClick={handleGraphBack}
+                    >
+                      <ArrowLeft className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>上一頁</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7 shrink-0"
+                      disabled={!lastGraphConnection || graphUndoingConnection}
+                      onClick={handleUndoGraphConnection}
+                    >
+                      {graphUndoingConnection ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {lastGraphConnection
+                      ? `取消上一筆拖曳連結：${lastGraphConnection.sourceTitle} ↔ ${lastGraphConnection.targetTitle}`
+                      : '沒有可取消的拖曳連結'}
+                  </TooltipContent>
+                </Tooltip>
+                <span className="text-xs font-medium text-gray-500 shrink-0">連結圖譜</span>
+              </div>
               <div className="min-w-0 flex items-center gap-2">
                 <span className="text-xs text-indigo-500 truncate max-w-[280px] text-right">
                   {noteChips.map(c => c.title).join(' · ')}
@@ -1189,6 +1398,7 @@ export function PermanentNotes() {
                     depth={graphDepth}
                     onDepthChange={setGraphDepth}
                     onNodeCtrlClick={setGraphCenterNote}
+                    onNodeConnect={handleGraphConnect}
                   />
                 </Suspense>
               ) : noteChips.length >= 1 ? (
@@ -1208,6 +1418,40 @@ export function PermanentNotes() {
         <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
           <div className="h-11 shrink-0 border-b border-gray-200 bg-white px-4 flex items-center justify-between">
             <div className="min-w-0 flex items-center gap-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 shrink-0"
+                    disabled={graphHistory.length === 0}
+                    onClick={handleGraphBack}
+                  >
+                    <ArrowLeft className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>上一頁</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 shrink-0"
+                    disabled={!lastGraphConnection || graphUndoingConnection}
+                    onClick={handleUndoGraphConnection}
+                  >
+                    {graphUndoingConnection ? <Loader2 className="size-4 animate-spin" /> : <Undo2 className="size-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {lastGraphConnection
+                    ? `取消上一筆拖曳連結：${lastGraphConnection.sourceTitle} ↔ ${lastGraphConnection.targetTitle}`
+                    : '沒有可取消的拖曳連結'}
+                </TooltipContent>
+              </Tooltip>
               <span className="text-sm font-medium text-gray-700 shrink-0">連結圖譜</span>
               <span className="text-xs text-indigo-500 truncate">
                 {noteChips.map(c => c.title).join(' · ')}
@@ -1218,7 +1462,7 @@ export function PermanentNotes() {
               size="icon"
               variant="ghost"
               className="size-8 shrink-0"
-              onClick={() => { setIsGraphExpanded(false); setGraphSelectedNote(null); }}
+              onClick={() => { setIsGraphExpanded(false); setGraphSelectedNote(null); setGraphSelectedMissingTitle(''); }}
             >
               <X className="size-4" />
             </Button>
@@ -1231,11 +1475,23 @@ export function PermanentNotes() {
                   centerNoteIds={graphCenterIds}
                   depth={graphDepth}
                   onDepthChange={setGraphDepth}
-                  onNodeClick={(id) => {
+                  onNodeClick={(id, name) => {
                     const note = allNotes.find(n => n.id === id);
-                    if (note) setGraphSelectedNote(note);
+                    if (note) {
+                      setGraphSelectedNote(note);
+                      setGraphSelectedMissingTitle('');
+                      if (isSummaryNote(note)) {
+                        ensureFullNote(note).catch(err => {
+                          console.warn('[PermanentNotes] failed to load graph note:', err.message);
+                        });
+                      }
+                    } else {
+                      setGraphSelectedNote(null);
+                      setGraphSelectedMissingTitle(name || id.replace(/^missing:/, ''));
+                    }
                   }}
                   onNodeCtrlClick={setGraphCenterNote}
+                  onNodeConnect={handleGraphConnect}
                 />
               </Suspense>
             </div>
@@ -1243,9 +1499,9 @@ export function PermanentNotes() {
               <div className="shrink-0 border-b border-gray-200 px-4 py-3">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-gray-400">
-                    {graphSelectedNote ? '點擊的筆記' : '中心筆記'}
+                    {currentGraphSelectedNote ? '點擊的筆記' : graphSelectedMissingTitle ? '未載入的節點' : '中心筆記'}
                   </span>
-                  {(graphSelectedNote ?? expandedCenterNote) && graphEditMode ? (
+                  {graphPanelNote && graphEditMode ? (
                     <Button
                       size="sm"
                       variant="default"
@@ -1256,7 +1512,7 @@ export function PermanentNotes() {
                       {graphSaving ? <Loader2 className="size-3 animate-spin mr-1" /> : <Save className="size-3 mr-1" />}
                       儲存
                     </Button>
-                  ) : (graphSelectedNote ?? expandedCenterNote) ? (
+                  ) : graphPanelNote ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -1268,16 +1524,16 @@ export function PermanentNotes() {
                   ) : null}
                 </div>
                 <h2 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
-                  {(graphSelectedNote ?? expandedCenterNote)?.title ?? noteChips[0]?.title}
+                  {graphPanelTitle}
                 </h2>
               </div>
-              {(graphSelectedNote ?? expandedCenterNote) ? (
+              {graphPanelNote ? (
                 <div className="flex-1 min-h-0 overflow-y-auto">
                   {graphEditMode ? (
                     <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入編輯器...</div>}>
                       <GraphNoteEditor
-                        noteId={(graphSelectedNote ?? expandedCenterNote)!.id}
-                        initialContent={(graphSelectedNote ?? expandedCenterNote)!.content}
+                        noteId={graphPanelNote.id}
+                        initialContent={graphPanelNote.content}
                         contentRef={graphEditContentRef}
                         vaultPath={config.notePath}
                       />
@@ -1285,12 +1541,16 @@ export function PermanentNotes() {
                   ) : (
                     <Suspense fallback={<div className="p-4 text-sm text-gray-400">載入預覽...</div>}>
                       <GraphNotePreview
-                        noteId={(graphSelectedNote ?? expandedCenterNote)!.id}
-                        content={(graphSelectedNote ?? expandedCenterNote)!.content}
+                        noteId={graphPanelNote.id}
+                        content={graphPanelNote.content}
                         vaultPath={config.notePath}
                       />
                     </Suspense>
                   )}
+                </div>
+              ) : graphSelectedMissingTitle ? (
+                <div className="flex-1 flex items-center justify-center px-6 text-center text-sm text-gray-400">
+                  這個節點目前不在已載入的筆記清單中，無法顯示內容。
                 </div>
               ) : (
                 <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
@@ -1387,14 +1647,16 @@ export function PermanentNotes() {
                     ? getContentPreview(fullNote.content)
                     : chunk.content.replace(/^@@[^@]*@@[^\n]*\n?/, '').trim();
 
+                  const isInSearch = noteChips.some(c => c.id === noteId);
+
                   const handleChunkClick = (event: React.MouseEvent) => {
                     if (event.ctrlKey || event.metaKey) {
                       event.preventDefault();
                       navigate(`/obsidian-note/${encodeURIComponent(noteId)}`, { state: { note: fullNote ?? null } });
                       return;
                     }
-                    if (noteChips.some(c => c.id === noteId)) {
-                      toast.info(`「${fileName}」已在搜尋列中`);
+                    if (isInSearch) {
+                      removeChip(noteId);
                       return;
                     }
                     const searchContent = fullNote ? extractSearchContent(fullNote) : fileName;
@@ -1407,11 +1669,11 @@ export function PermanentNotes() {
                     <Tooltip key={i}>
                       <TooltipTrigger asChild>
                         <Card
-                          className="p-4 cursor-pointer hover:shadow-lg transition-all bg-white h-64 flex flex-col overflow-hidden relative"
+                          className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden relative ${isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-white'}`}
                           onClick={handleChunkClick}
                         >
                           <div className="flex items-start justify-between mb-2 shrink-0">
-                            <h3 className="font-bold line-clamp-1 flex-1" style={{ fontSize: `${cardSizes.title}px` }}>{fileName}</h3>
+                            <h3 className="font-bold flex-1 max-h-[3em] overflow-hidden" style={{ fontSize: `${cardSizes.title}px` }}>{fileName}</h3>
                             <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800 ml-2 flex-shrink-0">
                               {(chunk.similarity * 100).toFixed(0)}%
                             </span>
@@ -1463,16 +1725,17 @@ export function PermanentNotes() {
                 })
               ) : (
                 (displayResults as Note[]).map(note => {
+                  const isInSearch = noteChips.some(c => c.id === note.id || c.title === note.title);
                   const noteTags = extractTags(note);
                   const preview = getContentPreview(note.content);
                   return (
                     <Tooltip key={note.id}>
                       <TooltipTrigger asChild>
                         <Card
-                          className="p-4 cursor-pointer hover:shadow-lg transition-all bg-blue-50 border-blue-200 h-64 flex flex-col overflow-hidden"
+                          className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden ${isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-blue-50 border-blue-200'}`}
                           onClick={e => handleNoteClick(note, e)}
                         >
-                          <h3 className="font-bold mb-2 line-clamp-1 shrink-0" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
+                          <h3 className="font-bold mb-2 shrink-0 max-h-[3em] overflow-hidden" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
                           {config.displayMetadataKeys.includes('tags') && noteTags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mb-2 shrink-0 overflow-hidden max-h-[52px]">
                               {noteTags.map(tag => (
@@ -1523,11 +1786,11 @@ export function PermanentNotes() {
                   <TooltipTrigger asChild>
                 <Card
                   className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden relative ${
-                    isInSearch ? 'ring-2 ring-blue-400 bg-blue-50' : 'bg-white'
+                    isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-white'
                   }`}
                   onClick={(event) => handleNoteClick(note, event)}
                 >
-                  <h3 className="font-bold mb-2 line-clamp-1 shrink-0" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
+                  <h3 className="font-bold mb-2 shrink-0 max-h-[3em] overflow-hidden" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
                   {config.displayMetadataKeys.includes('tags') && noteTags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mb-2 shrink-0 overflow-hidden max-h-[52px]">
                       {noteTags.map(tag => (

@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { Note, CardFontSizes } from '../types/note';
 import { Link2, Tag, Calendar } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -21,8 +22,8 @@ interface NoteCardProps {
   className?: string;
 }
 
-export function NoteCard({ note, sizes: sizesProp, onClick, onLinkClick, onContextMenu, className }: NoteCardProps) {
-  const sizes = { ...DEFAULT_SIZES, ...(sizesProp || {}) };
+function NoteCardComponent({ note, sizes: sizesProp, onClick, onLinkClick, onContextMenu, className }: NoteCardProps) {
+  const sizes = useMemo(() => ({ ...DEFAULT_SIZES, ...(sizesProp || {}) }), [sizesProp]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -84,7 +85,10 @@ export function NoteCard({ note, sizes: sizesProp, onClick, onLinkClick, onConte
     return { title: headingTitle, content: sectionContent };
   };
 
-  const { title: sectionTitle, content: sectionContent } = getFirstSectionContent(note.content);
+  const { title: sectionTitle, content: sectionContent } = useMemo(
+    () => getFirstSectionContent(note.content),
+    [note.content]
+  );
 
   return (
     <Tooltip>
@@ -95,7 +99,7 @@ export function NoteCard({ note, sizes: sizesProp, onClick, onLinkClick, onConte
           onContextMenu={onContextMenu}
         >
           <div className="flex items-start justify-between mb-2 shrink-0">
-            <h3 className="flex-1 font-bold line-clamp-1" style={{ fontSize: `${sizes.title}px` }}>{note.title}</h3>
+            <h3 className="flex-1 font-bold max-h-[3em] overflow-hidden" style={{ fontSize: `${sizes.title}px` }}>{note.title}</h3>
             <span className={`text-xs px-2 py-1 rounded ml-2 shrink-0 ${getTypeColor(note.type)}`}>
               {getTypeLabel(note.type)}
             </span>
@@ -145,3 +149,5 @@ export function NoteCard({ note, sizes: sizesProp, onClick, onLinkClick, onConte
     </Tooltip>
   );
 }
+
+export const NoteCard = memo(NoteCardComponent);

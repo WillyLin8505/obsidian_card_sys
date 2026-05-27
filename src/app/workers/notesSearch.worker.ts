@@ -2,15 +2,22 @@ interface SearchableNote {
   id: string;
   title: string;
   tags: string[];
-  frontmatter: Record<string, string>;
-  content: string;
+  tagsLower: string[];
+  frontmatterText: string;
   searchText: string;
   updatedTime: number;
 }
 
-interface SearchRequest {
-  requestId: number;
+interface IndexRequest {
+  type: 'index';
   notes: SearchableNote[];
+  indexVersion: string;
+}
+
+interface SearchRequest {
+  type?: 'search';
+  requestId: number;
+  indexVersion: string;
   searchTerm: string;
   selectedTags: string[];
   searchMode: 'text' | 'semantic';
@@ -25,15 +32,17 @@ interface SearchResult {
 
 const resultCache = new Map<string, SearchResult[]>();
 const MAX_CACHE_SIZE = 50;
+let indexedNotes: SearchableNote[] = [];
+let currentIndexVersion = '';
 
-function cacheKey(request: Omit<SearchRequest, 'requestId'>): string {
-  return JSON.stringify({
-    notes: request.notes.map(n => [n.id, n.updatedTime]),
-    searchTerm: request.searchTerm.trim().toLowerCase(),
-    selectedTags: [...request.selectedTags].sort(),
-    searchMode: request.searchMode,
-    expandedKeywords: request.expandedKeywords.map(k => k.toLowerCase()).sort(),
-  });
+function cacheKey(request: SearchRequest): string {
+  return [
+    request.indexVersion,
+    request.searchTerm.trim().toLowerCase(),
+    [...request.selectedTags].sort().join('\x1f'),
+    request.searchMode,
+    request.expandedKeywords.map(k => k.toLowerCase()).sort().join('\x1f'),
+  ].join('\x1e');
 }
 
 function remember(key: string, results: SearchResult[]): void {
@@ -48,9 +57,8 @@ function noteScore(note: SearchableNote, terms: string[], selectedTags: string[]
   let score = 0;
   const reasons = new Set<string>();
   const title = note.title.toLowerCase();
-  const tags = note.tags.map(tag => tag.toLowerCase());
-  const frontmatterText = Object.values(note.frontmatter || {}).join(' ').toLowerCase();
-  const content = note.content.toLowerCase();
+  const tags = note.tagsLower;
+  const frontmatterText = note.frontmatterText;
 
   if (!hasQuery) {
     score += 1;
@@ -70,7 +78,7 @@ function noteScore(note: SearchableNote, terms: string[], selectedTags: string[]
       score += 35;
       reasons.add('摘要');
     }
-    if (content.includes(term) || note.searchText.includes(term)) {
+    if (note.searchText.includes(term)) {
       score += 10;
       reasons.add('內文');
     }
@@ -85,9 +93,22 @@ function noteScore(note: SearchableNote, terms: string[], selectedTags: string[]
   return { id: note.id, score, reasons: [...reasons] };
 }
 
-self.onmessage = (event: MessageEvent<SearchRequest>) => {
-  const { requestId, notes, searchTerm, selectedTags, searchMode, expandedKeywords } = event.data;
-  const key = cacheKey({ notes, searchTerm, selectedTags, searchMode, expandedKeywords });
+self.onmessage = (event: MessageEvent<IndexRequest | SearchRequest>) => {
+  if (event.data.type === 'index') {
+    indexedNotes = event.data.notes;
+    currentIndexVersion = event.data.indexVersion;
+    resultCache.clear();
+    return;
+  }
+
+  const { requestId, searchTerm, selectedTags, searchMode, expandedKeywords } = event.data;
+  const indexVersion = event.data.indexVersion || currentIndexVersion;
+  if (indexVersion !== currentIndexVersion) {
+    self.postMessage({ requestId, results: [] });
+    return;
+  }
+
+  const key = cacheKey({ ...event.data, indexVersion });
   const cached = resultCache.get(key);
   if (cached) {
     self.postMessage({ requestId, results: cached });
@@ -101,11 +122,11 @@ self.onmessage = (event: MessageEvent<SearchRequest>) => {
   const hasQuery = terms.length > 0;
 
   const normalizedSelectedTags = selectedTags.map(tag => tag.toLowerCase());
-  const updatedTimeById = new Map(notes.map(note => [note.id, note.updatedTime]));
-  const results = notes
+  const updatedTimeById = new Map(indexedNotes.map(note => [note.id, note.updatedTime]));
+  const results = indexedNotes
     .filter(note =>
       normalizedSelectedTags.every(tag =>
-        note.tags.some(noteTag => noteTag.toLowerCase() === tag)
+        note.tagsLower.some(noteTag => noteTag === tag)
       )
     )
     .map(note => noteScore(note, terms, selectedTags, hasQuery))

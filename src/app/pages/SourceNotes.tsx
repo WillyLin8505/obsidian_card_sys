@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useDeferredValue } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useDeferredValue } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { storage, sortByRecentActivity } from '../utils/storage';
 import { getCardFontSizes } from '../utils/noteCardSizes';
@@ -7,19 +7,21 @@ import { NoteCard } from '../components/NoteCard';
 import { ExternalLink, ArrowLeft, Trash2, Link2, Tag as TagIcon, Loader2, Copy, CheckCircle2, Circle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { localApi } from '../utils/api';
+import { Progress } from '../components/ui/progress';
+import { FetchUrlProgress, localApi } from '../utils/api';
 import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { useDragSelect } from '../hooks/useDragSelect';
+import { useVirtualGrid } from '../hooks/useVirtualGrid';
 import { buildNoteContent } from '../utils/buildNoteContent';
 import { parseFrontmatterValue } from '../utils/frontmatter';
 
+const LazyMarkdown = lazy(() => import('../components/LazyMarkdown').then(module => ({ default: module.LazyMarkdown })));
+
 const LOCAL_SRC_KEY = 'zettelkasten_local_source_notes';
 const READ_IDS_KEY = 'zettelkasten_source_read_ids';
-const READING_SUMMARY_SOURCE_TAG_CLEANUP_KEY = 'source_notes_cleanup_reading_summary_tag_20260517';
+const RESTORE_READING_SUMMARY_TAG_KEY = 'source_notes_restore_reading_tag_v2_20260526';
 
 function getFrontmatterTags(content: string): string[] {
   return parseFrontmatterValue(content, 'tags')
@@ -36,15 +38,7 @@ function withFrontmatterTags(note: Note): Note {
 }
 
 function isSourceNote(note: Note): boolean {
-  return note.type === 'source' && note.tags.some(tag => tag.includes('文獻筆記'));
-}
-
-function isReadingSummaryDashTitle(title: string): boolean {
-  return /^閱讀整理\s*[-－–—]/.test(title.trim());
-}
-
-function withoutSourceNoteTag(tags: string[]): string[] {
-  return tags.filter(tag => !tag.includes('文獻筆記'));
+  return note.tags.some(tag => tag.includes('文獻筆記'));
 }
 
 function writeFrontmatterTags(content: string, tags: string[]): string {
@@ -100,6 +94,17 @@ function persistReadIds(ids: Set<string>): void {
   localStorage.setItem(READ_IDS_KEY, JSON.stringify([...ids]));
 }
 
+function isYouTubeUrl(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  return host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com');
+}
+
+type VideoFetchProgress = FetchUrlProgress & {
+  id: string;
+  url: string;
+  status: 'running' | 'done' | 'error';
+};
+
 export function SourceNotes() {
   const navigate = useNavigate();
   const { id: rawId } = useParams<{ id: string }>();
@@ -109,6 +114,7 @@ export function SourceNotes() {
   );
   const [urlInput, setUrlInput] = useState('');
   const [fetchingCount, setFetchingCount] = useState(0);
+  const [videoFetchProgress, setVideoFetchProgress] = useState<VideoFetchProgress[]>([]);
 
   // For viewing a specific note
   const [viewingNote, setViewingNote] = useState<Note | null>(null);
@@ -133,8 +139,8 @@ export function SourceNotes() {
 
   // 非同步掃描所有筆記的 tags，建立完整標籤池
   useEffect(() => {
-    storage.getNotes().then(allNotes => {
-      const config = storage.getConfig();
+    const config = storage.getConfig();
+    storage.getNotes({ summary: config.dataSource === 'obsidian' }).then(allNotes => {
       const fromConfig = config.sourceNoteTags || [];
       const fromNotes = allNotes.map(withFrontmatterTags).flatMap(n => n.tags ?? []);
       setAllTagPool([...new Set([...fromConfig, ...fromNotes])].sort());
@@ -181,63 +187,41 @@ export function SourceNotes() {
   // 使用拖曳選取hook
   const { isSelecting, selectionBox, isInSelectionBox, getSelectionBoxStyle, shouldClearSelection } = useDragSelect(containerRef);
 
+  // 保持最新版 isInSelectionBox ref，讓 scroll handler 不需要重新註冊
+  const isInSelectionBoxRef = useRef(isInSelectionBox);
+  useEffect(() => { isInSelectionBoxRef.current = isInSelectionBox; }, [isInSelectionBox]);
+
+  // 拖曳選取中滾動滑鼠滾輪時，重新計算選中的卡片
+  useEffect(() => {
+    if (!isSelecting) return;
+    const mainEl = containerRef.current?.closest('main');
+    if (!mainEl) return;
+    const onScroll = () => {
+      // 等虛擬格線重新渲染新卡片後再重算（聯集模式：只新增，不移除已選取的）
+      setTimeout(() => {
+        setSelectedNotes(prev => {
+          const next = new Set(prev);
+          cardRefs.current.forEach((el, id) => {
+            if (isInSelectionBoxRef.current(el)) next.add(id);
+          });
+          return next;
+        });
+      }, 50);
+    };
+    mainEl.addEventListener('scroll', onScroll, { passive: true });
+    return () => mainEl.removeEventListener('scroll', onScroll);
+  }, [isSelecting, containerRef]);
+  const virtualFilteredNotes = useVirtualGrid(filteredNotes, containerRef, {
+    itemHeight: 312,
+    maxColumns: 3,
+  });
+
   const cardSizes = useMemo(() => getCardFontSizes(storage.getConfig()), []);
 
   useEffect(() => {
     loadNotes();
   }, []);
 
-  useEffect(() => {
-    const cleanupReadingSummarySourceTags = async () => {
-      if (localStorage.getItem(READING_SUMMARY_SOURCE_TAG_CLEANUP_KEY) === 'done') return;
-
-      try {
-        const notesById = new Map<string, Note>();
-        (await storage.getNotes()).forEach(note => notesById.set(note.id, note));
-        getLocalSourceNotes().forEach(note => notesById.set(note.id, note));
-
-        const targets = Array.from(notesById.values())
-          .map(withFrontmatterTags)
-          .filter(note =>
-            note.type === 'source' &&
-            isReadingSummaryDashTitle(note.title) &&
-            note.tags.some(tag => tag.includes('文獻筆記'))
-          );
-
-        if (targets.length === 0) {
-          localStorage.setItem(READING_SUMMARY_SOURCE_TAG_CLEANUP_KEY, 'done');
-          return;
-        }
-
-        for (const note of targets) {
-          const nextTags = withoutSourceNoteTag(note.tags);
-          const nextContent = writeFrontmatterTags(note.content, nextTags);
-          const updatedAt = new Date().toISOString();
-          const localNote = getLocalSourceNotes().find(n => n.id === note.id);
-          saveLocalSourceNote({
-            ...(localNote ?? note),
-            content: nextContent,
-            tags: nextTags,
-            updatedAt,
-          });
-          await storage.updateNote(note.id, {
-            content: nextContent,
-            tags: nextTags,
-            updatedAt,
-          });
-        }
-
-        localStorage.setItem(READING_SUMMARY_SOURCE_TAG_CLEANUP_KEY, 'done');
-        toast.success(`已移除 ${targets.length} 則「閱讀整理-」筆記的文獻筆記標籤`);
-        await loadNotes();
-      } catch (error) {
-        console.error('Failed to clean reading summary source tags:', error);
-        toast.error('批次移除「閱讀整理-」文獻筆記標籤失敗');
-      }
-    };
-
-    cleanupReadingSummarySourceTags();
-  }, []);
 
   useEffect(() => {
     const loadNote = async () => {
@@ -347,9 +331,35 @@ export function SourceNotes() {
       let sourceNotes: Note[] = [];
       try {
         const allNotes = await storage.getNotes();
-        sourceNotes = allNotes
-          .filter(n => n.type === 'source')
-          .map(withFrontmatterTags);
+        const allWithTags = allNotes.map(withFrontmatterTags);
+        sourceNotes = allWithTags.filter(isSourceNote);
+
+        // Inline restoration: tag any 閱讀整理/閱讀筆記 note that's missing '文獻筆記'
+        if (localStorage.getItem(RESTORE_READING_SUMMARY_TAG_KEY) !== 'done') {
+          localStorage.removeItem('source_notes_cleanup_reading_summary_tag_20260517');
+          const targets = allWithTags.filter(note =>
+            /^閱讀(整理|筆記)\s*[-－–—]/.test(note.title.trim()) &&
+            !note.tags.some(tag => tag.includes('文獻筆記'))
+          );
+          if (targets.length === 0) {
+            localStorage.setItem(RESTORE_READING_SUMMARY_TAG_KEY, 'done');
+          } else {
+            const sourceTag = '3card/筆記法/卡片盒筆記法/文獻筆記';
+            const updatedAt = new Date().toISOString();
+            for (const note of targets) {
+              const nextTags = [...note.tags, sourceTag];
+              const nextContent = writeFrontmatterTags(note.content, nextTags);
+              const patched: Note = { ...note, content: nextContent, tags: nextTags, updatedAt };
+              saveLocalSourceNote(patched);
+              // Write to file in background — don't block rendering on network failure
+              storage.updateNote(note.id, { content: nextContent, tags: nextTags, updatedAt })
+                .catch(e => console.warn('Failed to persist tag to file:', note.id, e.message));
+              sourceNotes.push(patched);
+            }
+            localStorage.setItem(RESTORE_READING_SUMMARY_TAG_KEY, 'done');
+            toast.success(`已補上 ${targets.length} 則閱讀筆記的「文獻筆記」標籤`);
+          }
+        }
       } catch (err) {
         console.error('Error loading from storage:', err);
       }
@@ -362,7 +372,13 @@ export function SourceNotes() {
             mergedById.delete(id);
           }
         }
-        mergedById.set(localNote.id, localNote);
+        const existing = mergedById.get(localNote.id);
+        // Don't let a stale local copy (missing the tag) demote a note that main storage correctly tags
+        if (existing && isSourceNote(existing) && !isSourceNote(localNote)) {
+          mergedById.set(localNote.id, existing);
+        } else {
+          mergedById.set(localNote.id, localNote);
+        }
       }
 
       const merged = Array.from(mergedById.values()).filter(isSourceNote);
@@ -384,15 +400,48 @@ export function SourceNotes() {
       return;
     }
 
+    const isYoutube = isYouTubeUrl(parsedUrl);
+    const videoProgressId = isYoutube ? crypto.randomUUID() : null;
+    const updateVideoProgress = (progress: Partial<FetchUrlProgress> & Pick<VideoFetchProgress, 'status'>) => {
+      if (!videoProgressId || !isMountedRef.current) return;
+      setVideoFetchProgress(prev => prev.map(item => item.id === videoProgressId
+        ? { ...item, ...progress }
+        : item
+      ));
+    };
+
     setFetchingCount(c => c + 1);
     setUrlInput('');
-    toast.info('正在抓取並分析文章，請稍候...');
+    if (videoProgressId) {
+      setVideoFetchProgress(prev => [{
+        id: videoProgressId,
+        url: parsedUrl.toString(),
+        progress: 1,
+        stage: 'queued',
+        label: '準備送到 NotebookLM',
+        status: 'running',
+      }, ...prev]);
+    }
+    toast.info(isYoutube ? '正在送到 NotebookLM 摘要影片，請稍候...' : '正在抓取並分析文章，請稍候...');
 
     try {
       const config = storage.getConfig();
       const template = config.sourceNoteTemplate;
       const templateBody = template?.bodyTemplate;
-      const { title, content } = await localApi.fetchUrl(parsedUrl.toString(), templateBody);
+      const { title, content, sourceUrl } = await localApi.fetchUrl(
+        parsedUrl.toString(),
+        templateBody,
+        isYoutube
+          ? progress => updateVideoProgress({ ...progress, status: 'running' })
+          : undefined
+      );
+      updateVideoProgress({
+        progress: 100,
+        stage: 'note',
+        label: '建立文獻筆記',
+        status: 'running',
+      });
+      const finalSourceUrl = sourceUrl || parsedUrl.toString();
 
       // Prepend YAML frontmatter from metadataFields, filling create date with today
       const today = new Date().toISOString().split('T')[0];
@@ -402,8 +451,15 @@ export function SourceNotes() {
       const frontmatter = fieldsWithDate.length > 0
         ? buildNoteContent({ metadataFields: fieldsWithDate, bodyTemplate: '' })
         : '';
-      const fullContent = frontmatter + content;
-      const contentTags = getFrontmatterTags(fullContent);
+      let fullContent = frontmatter + content;
+      let contentTags = getFrontmatterTags(fullContent);
+
+      // YouTube 筆記強制加上「文獻筆記」標籤
+      if (isYoutube && !contentTags.some(t => t.includes('文獻筆記'))) {
+        const youtubeTag = '3card/筆記法/卡片盒筆記法/文獻筆記';
+        contentTags = [...contentTags, youtubeTag];
+        fullContent = writeFrontmatterTags(fullContent, contentTags);
+      }
 
       const noteId = crypto.randomUUID();
       const newNote: Note = {
@@ -413,7 +469,7 @@ export function SourceNotes() {
         type: 'source',
         tags: contentTags,
         links: [],
-        sourceUrl: parsedUrl.toString(),
+        sourceUrl: finalSourceUrl,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -453,7 +509,22 @@ export function SourceNotes() {
       }
 
       if (isMountedRef.current) {
-        await loadNotes();
+        setNotes(prev => sortByRecentActivity(
+          [withFrontmatterTags(newNote), ...prev.filter(note => note.id !== newNote.id)].filter(isSourceNote)
+        ));
+        updateVideoProgress({
+          progress: 100,
+          stage: 'done',
+          label: `已建立「${newNote.title}」`,
+          status: 'done',
+        });
+        if (videoProgressId) {
+          window.setTimeout(() => {
+            if (isMountedRef.current) {
+              setVideoFetchProgress(prev => prev.filter(item => item.id !== videoProgressId));
+            }
+          }, 5000);
+        }
         toast.success(`「${newNote.title}」已建立，點擊卡片可查看`, {
           action: {
             label: '開啟',
@@ -466,6 +537,11 @@ export function SourceNotes() {
     } catch (error: any) {
       console.error('Failed to fetch URL:', error);
       const msg = error.message || '';
+      updateVideoProgress({
+        stage: 'error',
+        label: msg || '影片摘要失敗',
+        status: 'error',
+      });
       const isFetchFailed = msg === 'Failed to fetch' || msg.includes('fetch');
       toast.error(
         isFetchFailed && !msg.includes('抓取網頁')
@@ -482,8 +558,8 @@ export function SourceNotes() {
 
     deleteLocalSourceNote(viewingNote.id);
     try { await storage.deleteNote(viewingNote.id); } catch { /* local-only */ }
+    setNotes(prev => prev.filter(note => note.id !== viewingNote.id));
     navigate('/source-notes');
-    await loadNotes();
   };
 
   const handleAddTag = async (tagOverride?: string) => {
@@ -510,7 +586,14 @@ export function SourceNotes() {
       } catch {
         // Local cache already updated — UI remains consistent
       }
-      await loadNotes();
+      setNotes(prev => sortByRecentActivity(
+        prev
+          .map(note => note.id === viewingNote.id
+            ? withFrontmatterTags({ ...note, content: updatedContent, tags: updatedTags, updatedAt: new Date().toISOString() })
+            : note
+          )
+          .filter(isSourceNote)
+      ));
     }
   };
 
@@ -543,7 +626,6 @@ export function SourceNotes() {
         )
         .filter(isSourceNote)
     ));
-    await loadNotes();
   };
 
   const syncEditorScroll = (source: HTMLElement, target: HTMLElement) => {
@@ -616,9 +698,9 @@ export function SourceNotes() {
       );
 
       toast.success(`已刪除 ${selectedNotes.size} 則筆記`);
+      setNotes(prev => prev.filter(note => !selectedNotes.has(note.id)));
       setSelectedNotes(new Set());
       setContextMenu(null);
-      await loadNotes();
     } catch (error: any) {
       console.error('Error deleting notes:', error);
       toast.error(`刪除失敗: ${error.message}`);
@@ -626,6 +708,26 @@ export function SourceNotes() {
   };
 
   const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  const handleMarkSelectedRead = () => {
+    setReadNoteIds(prev => {
+      const next = new Set(prev);
+      selectedNotes.forEach(id => next.add(id));
+      persistReadIds(next);
+      return next;
+    });
+    setContextMenu(null);
+  };
+
+  const handleMarkSelectedUnread = () => {
+    setReadNoteIds(prev => {
+      const next = new Set(prev);
+      selectedNotes.forEach(id => next.delete(id));
+      persistReadIds(next);
+      return next;
+    });
     setContextMenu(null);
   };
 
@@ -638,16 +740,16 @@ export function SourceNotes() {
     }
   }, [contextMenu]);
 
-  // 拖曳選取時更新選中的筆記
+  // 拖曳選取時更新選中的筆記（union 模式：只加不減，避免滾動後已選卡片被清除）
   useEffect(() => {
     if (isSelecting && selectionBox) {
-      const selected = new Set<string>();
-      cardRefs.current.forEach((element, noteId) => {
-        if (isInSelectionBox(element)) {
-          selected.add(noteId);
-        }
+      setSelectedNotes(prev => {
+        const next = new Set(prev);
+        cardRefs.current.forEach((element, noteId) => {
+          if (isInSelectionBox(element)) next.add(noteId);
+        });
+        return next;
       });
-      setSelectedNotes(selected);
     }
 
     if (shouldClearSelection) {
@@ -780,9 +882,9 @@ export function SourceNotes() {
                 }}
                 className="h-[70vh] min-h-[560px] overflow-auto rounded-lg border bg-white p-5 prose max-w-none [&_a]:break-all [&_li]:break-words"
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {deferredEditContent}
-                </ReactMarkdown>
+                <Suspense fallback={<div className="text-sm text-gray-400">載入預覽中...</div>}>
+                  <LazyMarkdown content={deferredEditContent} />
+                </Suspense>
               </div>
             </div>
           </div>
@@ -938,15 +1040,44 @@ export function SourceNotes() {
             <p className="text-xs text-gray-500 mt-1">
               抓取網址需先在設定頁開啟「允許外部網址/AI 分析」，並可能送到外部網站、Jina Reader 或後端設定的 Claude API；請勿貼上含敏感資料的網址。
             </p>
+            {videoFetchProgress.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {videoFetchProgress.map(item => (
+                  <div
+                    key={item.id}
+                    className={`border px-3 py-2 text-sm ${
+                      item.status === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : item.status === 'done'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : 'border-gray-200 bg-white text-gray-700'
+                    }`}
+                  >
+                    <div className="mb-1 flex items-center justify-between gap-3">
+                      <span className="truncate">{item.label}</span>
+                      <span className="shrink-0 text-xs tabular-nums">{Math.round(item.progress)}%</span>
+                    </div>
+                    <Progress
+                      value={item.progress}
+                      className={item.status === 'error' ? 'bg-red-100' : 'bg-gray-100'}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <div
         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 select-none"
-        style={{ userSelect: 'none' }}
+        style={{
+          userSelect: 'none',
+          paddingTop: virtualFilteredNotes.paddingTop,
+          paddingBottom: virtualFilteredNotes.paddingBottom,
+        }}
       >
-        {filteredNotes.map(note => {
+        {virtualFilteredNotes.items.map(note => {
           const isSelected = selectedNotes.has(note.id);
           const isRead = readNoteIds.has(note.id);
 
@@ -1022,15 +1153,30 @@ export function SourceNotes() {
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed bg-white border shadow-lg rounded-lg z-50 min-w-[180px]"
+          className="fixed bg-white border shadow-lg rounded-lg z-50 min-w-[180px] py-1"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button
-            className="w-full px-4 py-2 text-sm text-left text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-2"
+            className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50 transition-colors flex items-center gap-2"
+            onClick={handleMarkSelectedRead}
+          >
+            <CheckCircle2 className="size-4 text-green-500" />
+            標為已讀 ({selectedNotes.size})
+          </button>
+          <button
+            className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50 transition-colors flex items-center gap-2"
+            onClick={handleMarkSelectedUnread}
+          >
+            <Circle className="size-4 text-gray-400" />
+            標為未讀 ({selectedNotes.size})
+          </button>
+          <div className="border-t mx-2 my-1" />
+          <button
+            className="w-full px-4 py-2 text-sm text-left text-red-600 hover:bg-red-50 transition-colors flex items-center gap-2"
             onClick={handleDeleteSelected}
           >
             <Trash2 className="size-4" />
-            刪除選中的筆記 ({selectedNotes.size})
+            刪除 ({selectedNotes.size})
           </button>
         </div>
       )}

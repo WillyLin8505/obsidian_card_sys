@@ -123,15 +123,27 @@ export function useDragSelect(containerRef: React.RefObject<HTMLElement>) {
       }
     };
 
+    const handleWheel = (e: WheelEvent) => {
+      if (!isMouseDown.current || !hasMoved.current) return;
+      e.preventDefault();
+      // 捲動最近的 <main> 容器
+      const mainEl = (container as HTMLElement).closest('main') as HTMLElement | null;
+      if (mainEl) mainEl.scrollTop += e.deltaY;
+      // 把選取框底邊往捲動方向延伸，讓框框視覺上跟著成長
+      setSelectionBox(prev => prev ? { ...prev, endY: prev.endY + e.deltaY } : prev);
+    };
+
     // 添加事件監聽器
     container.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('wheel', handleWheel, { passive: false } as EventListenerOptions);
 
     return () => {
       container.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('wheel', handleWheel);
     };
   }, [containerRef]);
 

@@ -2,60 +2,7 @@ import { projectId, publicAnonKey } from '/utils/supabase/info';
 import { Note } from '../types/note';
 import { AISearchRequest, AISearchResponse, AISearchResult } from '../types/ai-search';
 import { KnowledgeDiscoveryRequest, KnowledgeDiscoveryResult } from '../types/knowledge-discovery';
-
-const CONFIG_KEY = 'zettelkasten_config';
-
-function getObsidianBackendUrl(): string {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    const config = raw ? JSON.parse(raw) : {};
-    return (config.obsidianBackendUrl || 'http://localhost:3001').replace(/\/$/, '');
-  } catch {
-    return 'http://localhost:3001';
-  }
-}
-
-function getLocalServerToken(): string {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    const config = raw ? JSON.parse(raw) : {};
-    return config.localServerToken || '';
-  } catch {
-    return '';
-  }
-}
-
-function allowsExternalAnalysis(): boolean {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    const config = raw ? JSON.parse(raw) : {};
-    return config.allowExternalAnalysis === true;
-  } catch {
-    return false;
-  }
-}
-
-function requireExternalAnalysis(): void {
-  if (!allowsExternalAnalysis()) {
-    throw new Error('請先到設定頁啟用「允許外部網址/AI 分析」。');
-  }
-}
-
-function localHeaders(extra?: HeadersInit): HeadersInit {
-  const headers: Record<string, string> = {};
-  if (extra) {
-    if (extra instanceof Headers) {
-      extra.forEach((value, key) => { headers[key] = value; });
-    } else if (Array.isArray(extra)) {
-      extra.forEach(([key, value]) => { headers[key] = value; });
-    } else {
-      Object.assign(headers, extra);
-    }
-  }
-  const token = getLocalServerToken();
-  if (token) headers['x-local-server-token'] = token;
-  return headers;
-}
+import { getLocalServerToken, getObsidianBackendUrl, localHeaders, requireExternalAnalysis } from './appConfig';
 
 async function fetchLocal(url: string, options?: RequestInit, fallback = 'Request failed'): Promise<Response> {
   const response = await fetch(url, {
@@ -67,6 +14,73 @@ async function fetchLocal(url: string, options?: RequestInit, fallback = 'Reques
     throw new Error(err.error || fallback);
   }
   return response;
+}
+
+export type FetchUrlResult = {
+  title: string;
+  content: string;
+  sourceUrl?: string;
+  notebookUrl?: string;
+  via?: string;
+};
+
+export type FetchUrlProgress = {
+  progress: number;
+  stage: string;
+  label: string;
+};
+
+type FetchUrlStreamMessage =
+  | { type: 'progress'; progress: FetchUrlProgress }
+  | { type: 'result'; result: FetchUrlResult }
+  | { type: 'error'; error: string };
+
+async function fetchUrlWithProgress(
+  url: string,
+  templateBody: string | undefined,
+  onProgress: (progress: FetchUrlProgress) => void
+): Promise<FetchUrlResult> {
+  const response = await fetch(`${getObsidianBackendUrl()}/fetch-url/stream`, {
+    method: 'POST',
+    headers: localHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ url, templateBody }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(err.error || '抓取網址失敗');
+  }
+  if (!response.body) throw new Error('本地伺服器沒有回傳進度串流');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: FetchUrlResult | undefined;
+
+  const handleLine = (line: string) => {
+    if (!line.trim()) return;
+    const message = JSON.parse(line) as FetchUrlStreamMessage;
+    if (message.type === 'progress') {
+      onProgress(message.progress);
+    } else if (message.type === 'result') {
+      result = message.result;
+    } else if (message.type === 'error') {
+      throw new Error(message.error);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) handleLine(line);
+    if (done) break;
+  }
+  handleLine(buffer);
+
+  if (!result) throw new Error('影片摘要完成前進度串流已結束');
+  return result;
 }
 
 export const localApi = {
@@ -120,6 +134,14 @@ export const localApi = {
     }, 'Failed to save note');
   },
 
+  deleteNote: async (relativePath: string, vaultPath: string): Promise<void> => {
+    await fetchLocal(`${getObsidianBackendUrl()}/notes`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ relativePath, vaultPath }),
+    }, 'Failed to delete note');
+  },
+
   search: async (question: string): Promise<AISearchResult> => {
     const response = await fetchLocal(`${getObsidianBackendUrl()}/search`, {
       method: 'POST',
@@ -164,6 +186,19 @@ export const localApi = {
     return generatedNotes as Array<{ model: string; title: string; content: string }>;
   },
 
+  classifyNoteTypes: async (
+    notes: Array<{ id: string; title: string; abstract?: string; content?: string; tags?: string[] }>
+  ): Promise<Array<{ id: string; category: string }>> => {
+    requireExternalAnalysis();
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/classify-note-types`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes }),
+    }, 'Note type classification failed');
+    const { categories } = await response.json();
+    return categories as Array<{ id: string; category: string }>;
+  },
+
   enrichNote: async (relativePath: string, vaultPath: string): Promise<void> => {
     requireExternalAnalysis();
     await fetchLocal(`${getObsidianBackendUrl()}/enrich-note`, {
@@ -182,8 +217,15 @@ export const localApi = {
     }, 'Vault enrich failed');
   },
 
-  fetchUrl: async (url: string, templateBody?: string): Promise<{ title: string; content: string }> => {
+  fetchUrl: async (
+    url: string,
+    templateBody?: string,
+    onProgress?: (progress: FetchUrlProgress) => void
+  ): Promise<FetchUrlResult> => {
     requireExternalAnalysis();
+    if (onProgress) {
+      return fetchUrlWithProgress(url, templateBody, onProgress);
+    }
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const response = await fetchLocal(`${getObsidianBackendUrl()}/fetch-url`, {
       method: 'POST',
@@ -201,6 +243,29 @@ export const localApi = {
     }, 'Failed to create note');
     const { relativePath } = await response.json();
     return relativePath as string;
+  },
+
+  transcribe: async (audio: Blob): Promise<{ text: string }> => {
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/transcribe`, {
+      method: 'POST',
+      body: audio,
+      headers: { 'Content-Type': audio.type || 'audio/webm' },
+    }, 'Transcription failed');
+    return response.json();
+  },
+
+  voiceChat: async (
+    query: string,
+    vaultPath?: string,
+    context?: { pageKey: string; pageLabel: string },
+    history?: Array<{ role: 'user' | 'assistant'; text: string }>
+  ): Promise<{ answer: string; noteCount: number; notePaths: string[]; logPath?: string }> => {
+    const response = await fetchLocal(`${getObsidianBackendUrl()}/voice-chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, vaultPath, context, history }),
+    }, 'Voice chat failed');
+    return response.json();
   },
 };
 

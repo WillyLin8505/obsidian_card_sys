@@ -1,105 +1,50 @@
-import { Note, Config, NoteTemplateConfig, MetadataField, DataSource, CardFontSizes } from '../types/note';
+import { Note, Config } from '../types/note';
 import { api, localApi } from './api';
+import { getConfig, getDataSource, saveConfig } from './appConfig';
 
 const NOTES_KEY = 'zettelkasten_notes';
-const CONFIG_KEY = 'zettelkasten_config';
 const RECENTLY_OPENED_KEY = 'zettelkasten_recently_opened';
+const NOTES_CACHE_TTL_MS = 60_000;
 
-const DEFAULT_CARD_FONT_SIZES: CardFontSizes = {
-  title: 18,
-  h1: 16,
-  h2: 14,
-  h3: 13,
-  h4: 12,
-  body: 12,
-  metadata: 11,
-};
+type NotesOptions = { summary?: boolean; force?: boolean };
+type NotesCacheEntry = { notes: Note[]; timestamp: number };
 
-const DEFAULT_CONFIG: Config = {
-  notePath: '~/Documents/Notes',
-  sourceNoteSavePath: '',
-  dataSource: 'supabase',
-  obsidianBackendUrl: 'http://localhost:3001',
-  allowExternalAnalysis: false,
-  fleetNoteTemplate: {
-    metadataFields: [
-      { key: 'create date', defaultValue: '' },
-      { key: 'aliases', defaultValue: '' },
-      { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/靈感筆記' },
-    ],
-    bodyTemplate: '# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
-  },
-  permanentNoteTemplate: {
-    metadataFields: [
-      { key: 'create date', defaultValue: '' },
-      { key: 'aliases', defaultValue: '' },
-      { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/永久筆記' },
-    ],
-    bodyTemplate: '# Note\n\n# Question \n\n# personal connection or purpose\n\n# TO DO step \n\n# others &  Reference',
-  },
-  sourceNoteTemplate: {
-    metadataFields: [
-      { key: 'create date', defaultValue: '' },
-      { key: 'aliases', defaultValue: '' },
-      { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/文獻筆記' },
-    ],
-    bodyTemplate: '# 文獻筆記\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n',
-  },
-  fleetNoteTags: [],
-  sourceNoteTags: [],
-  displayMetadataKeys: [],
-  fontSize: 12,
-  cardFontSizes: DEFAULT_CARD_FONT_SIZES,
-};
+const notesMemoryCache = new Map<string, NotesCacheEntry>();
+const notesInflight = new Map<string, Promise<Note[]>>();
 
-function migrateTemplate(value: unknown): NoteTemplateConfig {
-  if (typeof value === 'object' && value !== null && 'metadataFields' in value) {
-    return value as NoteTemplateConfig;
-  }
-  if (typeof value !== 'string') {
-    return { metadataFields: [], bodyTemplate: '' };
-  }
-  // Parse frontmatter from legacy string
-  const fmMatch = value.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!fmMatch) {
-    return { metadataFields: [], bodyTemplate: value };
-  }
-  const fmLines = fmMatch[1].split('\n');
-  const body = fmMatch[2].replace(/^\n/, '');
-  const fields: MetadataField[] = [];
-  let i = 0;
-  while (i < fmLines.length) {
-    const line = fmLines[i];
-    const kv = line.match(/^([^:]+):\s*(.*)$/);
-    if (!kv) { i++; continue; }
-    const key = kv[1].trim();
-    let val = kv[2].trim();
-    // Collect indented list items (e.g. tags)
-    const listItems: string[] = [];
-    while (i + 1 < fmLines.length && fmLines[i + 1].startsWith('  - ')) {
-      listItems.push(fmLines[i + 1].replace(/^\s+-\s*/, '').trim());
-      i++;
-    }
-    if (listItems.length > 0) val = listItems.join(',');
-    fields.push({ key, defaultValue: val });
-    i++;
-  }
-  return { metadataFields: fields, bodyTemplate: body };
+function obsidianCacheKey(vaultPath: string, options?: NotesOptions): string {
+  return `${vaultPath}\0${options?.summary ? 'summary' : 'full'}`;
 }
 
-function getDataSource(): DataSource {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    const config: Partial<Config> = raw ? JSON.parse(raw) : {};
-    return config.dataSource || 'supabase';
-  } catch {
-    return 'supabase';
+function clearObsidianCache(vaultPath?: string): void {
+  if (!vaultPath) {
+    notesMemoryCache.clear();
+    notesInflight.clear();
+    return;
   }
+  for (const key of notesMemoryCache.keys()) {
+    if (key.startsWith(`${vaultPath}\0`)) notesMemoryCache.delete(key);
+  }
+  for (const key of notesInflight.keys()) {
+    if (key.startsWith(`${vaultPath}\0`)) notesInflight.delete(key);
+  }
+}
+
+function dedupeVisibleNotes(raw: Note[]): Note[] {
+  const seen = new Set<string>();
+  return raw.filter(note => {
+    const id = note.id.replace(/\\/g, '/');
+    const lower = id.toLowerCase();
+    if (lower.startsWith('.trash/') || lower.includes('/.trash/')) return false;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 export const storage = {
   // Notes operations
-  getNotes: async (): Promise<Note[]> => {
+  getNotes: async (options?: NotesOptions): Promise<Note[]> => {
     const source = getDataSource();
 
     if (source === 'supabase') {
@@ -117,7 +62,24 @@ export const storage = {
         const config = storage.getConfig();
         const vaultPath = config.notePath || '';
         if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
-        return await localApi.getNotes(vaultPath);
+        const key = obsidianCacheKey(vaultPath, options);
+        const cached = notesMemoryCache.get(key);
+        if (!options?.force && cached && Date.now() - cached.timestamp < NOTES_CACHE_TTL_MS) {
+          return cached.notes;
+        }
+
+        const existing = !options?.force ? notesInflight.get(key) : undefined;
+        if (existing) return existing;
+
+        const request = localApi.getNotes(vaultPath, options).then(raw => {
+          const notes = dedupeVisibleNotes(raw);
+          notesMemoryCache.set(key, { notes, timestamp: Date.now() });
+          return notes;
+        }).finally(() => {
+          notesInflight.delete(key);
+        });
+        notesInflight.set(key, request);
+        return request;
       } catch (error) {
         console.error('Error fetching notes from Obsidian vault:', error);
         throw error;
@@ -131,6 +93,23 @@ export const storage = {
 
   saveNotes: (notes: Note[]): void => {
     localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+  },
+
+  invalidateNotesCache: (): void => {
+    clearObsidianCache();
+  },
+
+  reloadNotes: async (options?: { summary?: boolean }): Promise<Note[]> => {
+    const source = getDataSource();
+    if (source !== 'obsidian') return storage.getNotes({ ...options, force: true });
+
+    const config = storage.getConfig();
+    const vaultPath = config.notePath || '';
+    if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
+    clearObsidianCache(vaultPath);
+    const notes = dedupeVisibleNotes(await localApi.reloadNotes(vaultPath, options));
+    notesMemoryCache.set(obsidianCacheKey(vaultPath, options), { notes, timestamp: Date.now() });
+    return notes;
   },
 
   addNote: async (note: Note): Promise<Note> => {
@@ -154,6 +133,7 @@ export const storage = {
         const safeTitle = (note.title || 'new-note').replace(/[/\\?%*:|"<>]/g, '-');
         const filename = `${safeTitle}-${Date.now()}.md`;
         const relativePath = await localApi.createNote(vaultPath, filename, note.content);
+        clearObsidianCache(vaultPath);
         return { ...note, id: relativePath };
       } catch (error) {
         console.error('Error creating note in Obsidian vault:', error);
@@ -182,6 +162,18 @@ export const storage = {
       }
     }
 
+    if (source === 'obsidian') {
+      const config = storage.getConfig();
+      const vaultPath = config.notePath || '';
+      if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
+      if (typeof updates.content !== 'string') {
+        throw new Error('Obsidian 筆記更新需要提供 content');
+      }
+      await localApi.updateNote(id, vaultPath, updates.content);
+      clearObsidianCache(vaultPath);
+      return;
+    }
+
     const notes = await storage.getNotes();
     const index = notes.findIndex(n => n.id === id);
     if (index !== -1) {
@@ -195,6 +187,15 @@ export const storage = {
 
     if (source === 'supabase') {
       await api.notes.delete(id);
+      return;
+    }
+
+    if (source === 'obsidian') {
+      const config = storage.getConfig();
+      const vaultPath = config.notePath || '';
+      if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
+      await localApi.deleteNote(id, vaultPath);
+      clearObsidianCache(vaultPath);
       return;
     }
 
@@ -214,32 +215,26 @@ export const storage = {
       }
     }
 
+    if (source === 'obsidian') {
+      try {
+        const config = storage.getConfig();
+        const vaultPath = config.notePath || '';
+        if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
+        return await localApi.getNoteByPath(id, vaultPath);
+      } catch (error: any) {
+        console.error(`Error fetching note by path from Obsidian (ID: ${id}):`, error.message);
+        return undefined;
+      }
+    }
+
     const notes = await storage.getNotes();
     return notes.find(n => n.id === id);
   },
 
   // Config operations
-  getConfig: (): Config => {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    if (!raw) return { ...DEFAULT_CONFIG };
-    const saved = JSON.parse(raw) as Record<string, unknown>;
-    if ('claudeApiKey' in saved) {
-      delete saved.claudeApiKey;
-      localStorage.setItem(CONFIG_KEY, JSON.stringify(saved));
-    }
-    return {
-      ...DEFAULT_CONFIG,
-      ...(saved as Partial<Config>),
-      cardFontSizes: { ...DEFAULT_CARD_FONT_SIZES, ...((saved.cardFontSizes as Partial<CardFontSizes>) || {}) },
-      fleetNoteTemplate: migrateTemplate(saved.fleetNoteTemplate ?? DEFAULT_CONFIG.fleetNoteTemplate),
-      permanentNoteTemplate: migrateTemplate(saved.permanentNoteTemplate ?? DEFAULT_CONFIG.permanentNoteTemplate),
-      sourceNoteTemplate: migrateTemplate(saved.sourceNoteTemplate ?? DEFAULT_CONFIG.sourceNoteTemplate),
-    };
-  },
+  getConfig,
 
-  saveConfig: (config: Config): void => {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-  },
+  saveConfig: (config: Config): void => saveConfig(config),
 
   // Recently opened tracking
   recordOpened: (noteId: string): void => {
