@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, isAbsolute, join, resolve } from 'path';
@@ -183,6 +183,11 @@ app.use('/ios-share', iosShareRouter);
 app.use((req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
 });
+
+// Free port if already in use (e.g. previous --watch restart left a ghost process)
+try {
+  execFileSync('fuser', ['-k', `${PORT}/tcp`], { stdio: 'ignore' });
+} catch {}
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`Card Box local server running on http://${HOST}:${PORT}`);
