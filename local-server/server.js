@@ -5,6 +5,7 @@ import { spawn, execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, isAbsolute, join, resolve } from 'path';
+import webhookRouter from './routes/webhook.js';
 import healthRouter from './routes/health.js';
 import searchRouter from './routes/search.js';
 import notesRouter from './routes/notes.js';
@@ -117,6 +118,15 @@ app.use(cors({
     return callback(new Error(`Origin not allowed: ${origin}`));
   },
 }));
+
+// Webhook must be registered before express.json() so we can read the raw body for HMAC verification
+app.use('/webhook', (req, _res, next) => {
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
+  req.on('end', () => { req.rawBody = Buffer.concat(chunks); next(); });
+});
+app.use('/webhook', webhookRouter);
+
 app.use(express.json({ limit: '1mb' }));
 
 const rateLimitRules = [
