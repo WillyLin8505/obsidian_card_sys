@@ -73,6 +73,8 @@ function startSearchServer() {
     return;
   }
 
+  try { execFileSync('fuser', ['-k', '8765/tcp'], { stdio: 'ignore' }); } catch {}
+
   searchProc = spawn(SEARCH_SERVER_PYTHON, [SEARCH_SERVER_SCRIPT], {
     cwd: SEARCH_SERVER_CWD,
     stdio: ['ignore', 'pipe', 'pipe'],
