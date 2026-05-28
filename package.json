@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "dev:all": "concurrently -n \"frontend,backend,notebooklm,gateway,tunnel\" -c \"blue,green,yellow,magenta,cyan\" \"vite\" \"cd local-server && npm run dev\" \"cd local-server && npm run notebooklm:start\" \"cd local-server && npm run app:gateway\" \"cd local-server && npm run app:tunnel\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -54,6 +55,7 @@
     "react-router": "7.13.0",
     "react-syntax-highlighter": "^16.1.1",
     "recharts": "2.15.2",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "sonner": "2.0.3",
     "tailwind-merge": "3.2.0",
@@ -68,6 +70,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@vitejs/plugin-react": "4.7.0",
     "@vitest/coverage-v8": "^4.1.2",
+    "concurrently": "^8.2.2",
     "jsdom": "^29.0.1",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5",

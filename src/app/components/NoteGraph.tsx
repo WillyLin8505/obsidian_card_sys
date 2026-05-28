@@ -2,6 +2,7 @@ import { useRef, useMemo, useEffect, useLayoutEffect, useState, useCallback } fr
 import ForceGraph2D from 'react-force-graph-2d';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { Note } from '../types/note';
 import { normalizeNoteLinkKey, noteLinkAliases, parseFrontmatterLinks, parseMarkdownLinkRecords, parseWikiLinks } from '../utils/noteLinks';
 import { localApi } from '../utils/api';
@@ -1452,7 +1453,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                       onWheel={(e) => e.stopPropagation()}
                     >
                       <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
+                        remarkPlugins={[remarkGfm, remarkBreaks]}
                         components={{
                           h1: ({ children }) => <div style={{ fontWeight: 700, fontSize: '9px', marginBottom: '2px' }}>{children}</div>,
                           h2: ({ children }) => <div style={{ fontWeight: 700, fontSize: '8.5px', marginBottom: '2px' }}>{children}</div>,
