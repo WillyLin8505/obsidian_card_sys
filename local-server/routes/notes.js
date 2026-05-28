@@ -310,9 +310,10 @@ function stripMarkdownForSummary(content) {
 
 function buildNoteSummary(note) {
   const bodyText = stripMarkdownForSummary(note.content);
+  const withoutFm = note.content.replace(/^---\s*\n[\s\S]*?\n---\s*\n*/, '');
   return {
     ...note,
-    content: bodyText.slice(0, 600),
+    content: withoutFm.slice(0, 1500),
     searchText: [note.title, ...(note.tags || []), bodyText].join(' ').slice(0, 4000),
   };
 }

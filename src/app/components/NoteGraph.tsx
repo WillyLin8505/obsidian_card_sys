@@ -1,5 +1,7 @@
 import { useRef, useMemo, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Note } from '../types/note';
 import { normalizeNoteLinkKey, noteLinkAliases, parseFrontmatterLinks, parseMarkdownLinkRecords, parseWikiLinks } from '../utils/noteLinks';
 import { localApi } from '../utils/api';
@@ -379,6 +381,36 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     () => new Map(allNotes.map(n => [n.id, extractSnippet(n.content || '')])),
     [allNotes],
   );
+
+  const noteMarkdownMap = useMemo(() => {
+    const map = new Map<string, string>();
+    allNotes.forEach(n => {
+      const raw = n.content || '';
+      const withoutFm = raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
+      const clean = withoutFm.replace(/\[\[([^\]|#\n]+?)(?:\|([^\]]+))?\]\]/g, (_m, tgt, alias) => alias || (tgt.split('/').pop() ?? tgt));
+      map.set(n.id, clean);
+    });
+    return map;
+  }, [allNotes]);
+
+  const overlayTransformRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!cardMode) return;
+    let rafId: number;
+    const sync = () => {
+      const fg = graphRef.current;
+      const el = overlayTransformRef.current;
+      if (fg?.graph2ScreenCoords && el) {
+        const { x: tx, y: ty } = fg.graph2ScreenCoords(0, 0) as { x: number; y: number };
+        const k = typeof fg.zoom === 'function' ? (fg.zoom() as number) : 1;
+        el.style.transform = `translate(${tx}px,${ty}px) scale(${k})`;
+      }
+      rafId = requestAnimationFrame(sync);
+    };
+    rafId = requestAnimationFrame(sync);
+    return () => cancelAnimationFrame(rafId);
+  }, [cardMode]);
 
   const { nameToId, noteIds } = useMemo(() => {
     const nameToId = new Map<string, string>();
@@ -1108,7 +1140,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
   return (
     <div className="w-full h-full flex flex-col">
-      <div ref={canvasWrapRef} className="flex-1 min-h-0 overflow-hidden">
+      <div ref={canvasWrapRef} className="flex-1 min-h-0 overflow-hidden relative">
         {visibleGraphData.nodes.length === 0 ? (
           <div className="flex items-center justify-center h-full text-xs text-gray-400 select-none">
             找不到筆記
@@ -1156,14 +1188,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 if (cardMode) {
                   const nx = node.x as number;
                   const ny = node.y as number;
-                  const snippet = (node.snippet as string) || '';
-                  const titleLines = wrapLabel(node.name as string, CARD_TITLE_MAX_CHARS);
-                  const bodyLines = snippet ? wrapLabel(snippet, CARD_BODY_MAX_CHARS).slice(0, CARD_BODY_MAX_LINES) : [];
-                  const titleLineH = CARD_TITLE_FONT + 2;
-                  const bodyLineH = CARD_BODY_FONT + 2;
-                  const titleH = titleLines.length * titleLineH;
-                  const bodyH = bodyLines.length * bodyLineH;
-                  const cardGap = bodyLines.length > 0 ? 4 : 0;
                   const cardX = nx - CARD_W / 2;
                   const cardY = ny - CARD_H / 2;
 
@@ -1172,7 +1196,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
                   ctx.fillStyle = '#ffffff';
                   ctx.fillRect(cardX, cardY, CARD_W, CARD_H);
-                  ctx.fillStyle = hexToRgba(color, 0.1);
+                  ctx.fillStyle = hexToRgba(color, 0.06);
                   ctx.fillRect(cardX, cardY, CARD_W, CARD_H);
 
                   ctx.lineWidth = isCenter ? 1.5 : 0.8;
@@ -1180,35 +1204,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                   if (d < 0) ctx.setLineDash([2, 2]);
                   ctx.strokeRect(cardX, cardY, CARD_W, CARD_H);
                   ctx.setLineDash([]);
-
-                  ctx.font = `bold ${CARD_TITLE_FONT}px sans-serif`;
-                  ctx.fillStyle = readableCategoryTextColor(color);
-                  ctx.textBaseline = 'middle';
-                  ctx.textAlign = 'left';
-                  let textY = cardY + CARD_PAD_Y + titleLineH / 2;
-                  titleLines.forEach(line => {
-                    ctx.fillText(line, cardX + CARD_PAD_X, textY, CARD_W - CARD_PAD_X * 2);
-                    textY += titleLineH;
-                  });
-
-                  if (bodyLines.length > 0) {
-                    textY += 1.5;
-                    ctx.globalAlpha = isDimmed ? 0.1 : 0.25;
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 0.5;
-                    ctx.beginPath();
-                    ctx.moveTo(cardX + CARD_PAD_X, textY);
-                    ctx.lineTo(cardX + CARD_W - CARD_PAD_X, textY);
-                    ctx.stroke();
-                    ctx.globalAlpha = isDimmed ? 0.2 : 1;
-                    textY += 2.5;
-
-                    ctx.font = `${CARD_BODY_FONT}px sans-serif`;
-                    ctx.fillStyle = hexToRgba(readableCategoryTextColor(color), 0.65);
-                    bodyLines.forEach((line, i) => {
-                      ctx.fillText(line, cardX + CARD_PAD_X, textY + bodyLineH / 2 + i * bodyLineH, CARD_W - CARD_PAD_X * 2);
-                    });
-                  }
 
                   ctx.restore();
                   return;
@@ -1398,6 +1393,97 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               minZoom={0.2}
               maxZoom={4}
             />
+          </div>
+        )}
+        {cardMode && graphVisible && visibleGraphData.nodes.length > 0 && (
+          <div
+            className="absolute inset-0 overflow-hidden"
+            style={{ pointerEvents: 'none', zIndex: 5 }}
+          >
+            <div
+              ref={overlayTransformRef}
+              style={{ position: 'absolute', top: 0, left: 0, transformOrigin: '0 0' }}
+            >
+              {(visibleGraphData.nodes as any[]).map((node: any) => {
+                const id = node.id as string;
+                const content = noteMarkdownMap.get(id) ?? '';
+                if (!content) return null;
+                const isDimmed = Boolean(highlightIds && !highlightIds.has(id));
+                const nx = (node.x ?? 0) as number;
+                const ny = (node.y ?? 0) as number;
+                return (
+                  <div
+                    key={id}
+                    style={{
+                      position: 'absolute',
+                      left: nx - CARD_W / 2,
+                      top: ny - CARD_H / 2,
+                      width: CARD_W,
+                      height: CARD_H,
+                      opacity: isDimmed ? 0.2 : 1,
+                      pointerEvents: 'auto',
+                      cursor: 'pointer',
+                      overflow: 'hidden',
+                    }}
+                    onClick={(e) => {
+                      if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        onNodeCtrlClick?.(id);
+                        return;
+                      }
+                      suppressZoomRef.current = true;
+                      setTimeout(() => { suppressZoomRef.current = false; }, 2000);
+                      setFocusedNodeId(id);
+                      onNodeClick?.(id, node.name as string | undefined);
+                    }}
+                    onContextMenu={(e) => { e.preventDefault(); onNodeRightClick?.(id); }}
+                    onMouseEnter={() => { if (!focusedNodeId) setHoverNodeId(id); }}
+                    onMouseLeave={() => { if (!focusedNodeId) setHoverNodeId(null); }}
+                  >
+                    <div
+                      style={{
+                        height: '100%',
+                        overflowY: 'auto',
+                        padding: `${CARD_PAD_Y}px ${CARD_PAD_X}px`,
+                        fontSize: '7px',
+                        lineHeight: '1.5',
+                        color: '#374151',
+                      }}
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          h1: ({ children }) => <div style={{ fontWeight: 700, fontSize: '9px', marginBottom: '2px' }}>{children}</div>,
+                          h2: ({ children }) => <div style={{ fontWeight: 700, fontSize: '8.5px', marginBottom: '2px' }}>{children}</div>,
+                          h3: ({ children }) => <div style={{ fontWeight: 600, fontSize: '8px', marginBottom: '1px' }}>{children}</div>,
+                          h4: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7.5px' }}>{children}</div>,
+                          h5: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7px' }}>{children}</div>,
+                          h6: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7px' }}>{children}</div>,
+                          p: ({ children }) => <div style={{ marginBottom: '3px' }}>{children}</div>,
+                          ul: ({ children }) => <ul style={{ paddingLeft: '9px', marginBottom: '3px', listStyleType: 'disc' }}>{children}</ul>,
+                          ol: ({ children }) => <ol style={{ paddingLeft: '9px', marginBottom: '3px' }}>{children}</ol>,
+                          li: ({ children }) => <li style={{ marginBottom: '1px' }}>{children}</li>,
+                          strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
+                          em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+                          code: ({ children }) => <code style={{ background: 'rgba(0,0,0,0.08)', borderRadius: '2px', padding: '0 2px', fontSize: '6.5px', fontFamily: 'monospace' }}>{children}</code>,
+                          pre: ({ children }) => <pre style={{ background: 'rgba(0,0,0,0.05)', borderRadius: '3px', padding: '3px', overflowX: 'auto', fontSize: '6.5px', marginBottom: '3px' }}>{children}</pre>,
+                          blockquote: ({ children }) => <blockquote style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '4px', margin: '2px 0', opacity: 0.8 }}>{children}</blockquote>,
+                          hr: () => <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '3px 0' }} />,
+                          a: ({ children }) => <span style={{ color: '#6366f1' }}>{children}</span>,
+                          img: () => null,
+                          table: ({ children }) => <table style={{ fontSize: '6px', borderCollapse: 'collapse', marginBottom: '3px' }}>{children}</table>,
+                          th: ({ children }) => <th style={{ border: '1px solid #e2e8f0', padding: '1px 3px', fontWeight: 600 }}>{children}</th>,
+                          td: ({ children }) => <td style={{ border: '1px solid #e2e8f0', padding: '1px 3px' }}>{children}</td>,
+                        }}
+                      >
+                        {content}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
