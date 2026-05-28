@@ -138,6 +138,8 @@ const LABEL_BOX_GAP = 2;       // px between adjacent label boxes in the same co
 const COL_NODE_GAP = 4;        // min gap between prev column's label right edge and next node left edge
 const ZOOM_FIT_MIN_PADDING = 14;
 const ZOOM_FIT_MAX_PADDING = 36;
+const TABLET_GRAPH_WIDTH = 900;
+const FULL_MARKDOWN_CARD_LIMIT = 36;
 
 // Card mode
 const CARD_W = 200;
@@ -149,6 +151,38 @@ const CARD_BODY_FONT = 7;
 const CARD_BODY_MAX_LINES = 3;
 const CARD_TITLE_MAX_CHARS = 16;
 const CARD_BODY_MAX_CHARS = 22;
+const textWidthCache = new Map<string, number>();
+
+function cachedTextWidth(ctx: CanvasRenderingContext2D, text: string): number {
+  const key = `${ctx.font}\u0000${text}`;
+  const cached = textWidthCache.get(key);
+  if (cached !== undefined) return cached;
+  const measured = ctx.measureText(text).width;
+  textWidthCache.set(key, measured);
+  if (textWidthCache.size > 3000) {
+    textWidthCache.delete(textWidthCache.keys().next().value);
+  }
+  return measured;
+}
+
+function labelLines(node: any): string[] {
+  return Array.isArray(node.labelLines) ? node.labelLines : wrapLabel(node.name as string, LABEL_MAX_CHARS);
+}
+
+function compactCardText(value: string): string {
+  return value
+    .replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[\[([^\]|#\n]+?)(?:\|([^\]]+))?\]\]/g, (_m, tgt, alias) => alias || (tgt.split('/').pop() ?? tgt))
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_>#-]/g, '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, CARD_BODY_MAX_LINES)
+    .join(' ')
+    .slice(0, CARD_BODY_MAX_LINES * CARD_BODY_MAX_CHARS);
+}
 
 function nodeCircleRadius(depth: number, isCenter = false) {
   return isCenter ? 7 : Math.max(3, 6 - Math.abs(depth));
@@ -161,9 +195,8 @@ function labelBoxMetrics(node: any, ctx: CanvasRenderingContext2D) {
   const r = nodeCircleRadius(Math.abs(d), isCenter);
   const nx = node.x as number;
   const ny = node.y as number;
-  const name = node.name as string;
   const fontSize = isCenter ? 9 : 7;
-  const lines = wrapLabel(name, LABEL_MAX_CHARS);
+  const lines = labelLines(node);
   const lineH = fontSize + 2;
   const totalH = lines.length * lineH;
 
@@ -171,7 +204,7 @@ function labelBoxMetrics(node: any, ctx: CanvasRenderingContext2D) {
   ctx.textBaseline = 'middle';
 
   ctx.textAlign = 'left';
-  const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+  const maxW = Math.max(...lines.map(l => cachedTextWidth(ctx, l)));
   const labelX = nx + r + LABEL_NODE_MIN_GAP;
   const labelCy = ny;
   const boxX = labelX - LABEL_PAD_X / 2;
@@ -201,7 +234,7 @@ function estimatedLabelBoxBounds(node: any, cardMode = false) {
   const r = nodeCircleRadius(Math.abs(d), isCenter);
   const name = node.name as string;
   const fontSize = isCenter ? 9 : 7;
-  const lines = wrapLabel(name, LABEL_MAX_CHARS);
+  const lines = labelLines(node);
   const lineH = fontSize + 2;
   const totalH = lines.length * lineH;
   const maxW = Math.max(...lines.map(line => line.length * fontSize));
@@ -312,6 +345,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   const suppressNextClickRef = useRef(false);
   const mouseGraphPosRef = useRef<{ x: number; y: number } | null>(null);
   const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+  const overlayTransformRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ width: 440, height: 300 });
   const [internalSliderDepth, setInternalSliderDepth] = useState(1);
   const sliderDepth = depth ?? internalSliderDepth;
@@ -338,13 +372,22 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     if (!el) return;
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect;
-      if (width > 0 && height > 0) setDims({ width, height });
+      const nextWidth = Math.round(width);
+      const nextHeight = Math.round(height);
+      if (nextWidth > 0 && nextHeight > 0) {
+        setDims(prev => (
+          prev.width === nextWidth && prev.height === nextHeight
+            ? prev
+            : { width: nextWidth, height: nextHeight }
+        ));
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
   useEffect(() => {
+    if (isTouchDevice || !onNodeConnect) return;
     const el = canvasWrapRef.current;
     if (!el) return;
     const handler = (e: PointerEvent) => {
@@ -355,7 +398,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     };
     el.addEventListener('pointermove', handler);
     return () => el.removeEventListener('pointermove', handler);
-  }, []);
+  }, [isTouchDevice, onNodeConnect]);
 
   useEffect(() => {
     // Touch devices use pinch-to-zoom natively via d3-zoom; the Ctrl+scroll handler is desktop-only.
@@ -383,35 +426,22 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     [allNotes],
   );
 
-  const noteMarkdownMap = useMemo(() => {
-    const map = new Map<string, string>();
-    allNotes.forEach(n => {
-      const raw = n.content || '';
-      const withoutFm = raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
-      const clean = withoutFm.replace(/\[\[([^\]|#\n]+?)(?:\|([^\]]+))?\]\]/g, (_m, tgt, alias) => alias || (tgt.split('/').pop() ?? tgt));
-      map.set(n.id, clean);
-    });
-    return map;
-  }, [allNotes]);
-
-  const overlayTransformRef = useRef<HTMLDivElement>(null);
+  const syncCardOverlayTransform = useCallback(() => {
+    if (!cardMode) return;
+    const fg = graphRef.current;
+    const el = overlayTransformRef.current;
+    if (fg?.graph2ScreenCoords && el) {
+      const { x: tx, y: ty } = fg.graph2ScreenCoords(0, 0) as { x: number; y: number };
+      const k = typeof fg.zoom === 'function' ? (fg.zoom() as number) : 1;
+      el.style.transform = `translate(${tx}px,${ty}px) scale(${k})`;
+    }
+  }, [cardMode]);
 
   useEffect(() => {
     if (!cardMode) return;
-    let rafId: number;
-    const sync = () => {
-      const fg = graphRef.current;
-      const el = overlayTransformRef.current;
-      if (fg?.graph2ScreenCoords && el) {
-        const { x: tx, y: ty } = fg.graph2ScreenCoords(0, 0) as { x: number; y: number };
-        const k = typeof fg.zoom === 'function' ? (fg.zoom() as number) : 1;
-        el.style.transform = `translate(${tx}px,${ty}px) scale(${k})`;
-      }
-      rafId = requestAnimationFrame(sync);
-    };
-    rafId = requestAnimationFrame(sync);
+    const rafId = requestAnimationFrame(syncCardOverlayTransform);
     return () => cancelAnimationFrame(rafId);
-  }, [cardMode]);
+  }, [cardMode, syncCardOverlayTransform]);
 
   const { nameToId, noteIds } = useMemo(() => {
     const nameToId = new Map<string, string>();
@@ -756,9 +786,11 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
     const nodes = [...nodeDepths.entries()].map(([id, d]) => {
       const pos = positions.get(id) ?? { x: 0, y: 0 };
+      const name = displayName(id);
       return {
         id,
-        name: displayName(id),
+        name,
+        labelLines: wrapLabel(name, LABEL_MAX_CHARS),
         depth: d,
         isCenter: centerSet.has(id),
         isIncoming: d < 0,
@@ -942,6 +974,29 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       }).filter((link: any) => nodeById.has(link.source) && nodeById.has(link.target)),
     };
   }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories, cardMode]);
+
+  const lowPowerGraph = isTouchDevice || dims.width <= TABLET_GRAPH_WIDTH || visibleGraphData.nodes.length > 120;
+  const renderFullMarkdownCards = cardMode && !lowPowerGraph && visibleGraphData.nodes.length <= FULL_MARKDOWN_CARD_LIMIT;
+
+  const visibleCardContentMap = useMemo(() => {
+    if (!cardMode) return new Map<string, string>();
+    const visibleIds = new Set(visibleGraphData.nodes.map((node: any) => node.id as string));
+    const map = new Map<string, string>();
+    allNotes.forEach(note => {
+      if (!visibleIds.has(note.id)) return;
+      const raw = note.content || '';
+      if (renderFullMarkdownCards) {
+        const withoutFm = raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
+        map.set(
+          note.id,
+          withoutFm.replace(/\[\[([^\]|#\n]+?)(?:\|([^\]]+))?\]\]/g, (_m, tgt, alias) => alias || (tgt.split('/').pop() ?? tgt)),
+        );
+      } else {
+        map.set(note.id, compactCardText(raw));
+      }
+    });
+    return map;
+  }, [allNotes, cardMode, renderFullMarkdownCards, visibleGraphData.nodes]);
 
   const highlightIds = useMemo(() => {
     const rootId = focusedNodeId ?? hoverNodeId;
@@ -1156,6 +1211,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               height={dims.height}
               backgroundColor="#f8fafc"
               d3AlphaDecay={1}
+              autoPauseRedraw
               linkColor={(link: any) => {
                 if (!highlightIds) return '#94a3b8';
                 const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
@@ -1164,12 +1220,14 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                   ? '#94a3b8'
                   : 'rgba(148, 163, 184, 0.16)';
               }}
-              linkWidth={(link: any) => link.bidirectional ? 2 : 1}
+              linkWidth={(link: any) => lowPowerGraph ? (link.bidirectional ? 1.4 : 0.8) : (link.bidirectional ? 2 : 1)}
               linkDirectionalArrowLength={(link: any) => {
-                if (!highlightIds) return 4;
+                if (!highlightIds) return lowPowerGraph ? 0 : 4;
                 const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
                 const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-                return highlightIds.has(sourceId) && highlightIds.has(targetId) ? 4 : 2;
+                return highlightIds.has(sourceId) && highlightIds.has(targetId)
+                  ? (lowPowerGraph ? 3 : 4)
+                  : (lowPowerGraph ? 0 : 2);
               }}
               linkDirectionalArrowColor={(link: any) => {
                 if (!highlightIds) return '#94a3b8';
@@ -1180,7 +1238,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                   : 'rgba(148, 163, 184, 0.16)';
               }}
               linkDirectionalArrowRelPos={1}
-              nodeCanvasObject={(node: any, ctx) => {
+              nodeCanvasObject={(node: any, ctx, globalScale) => {
                 const d = node.depth as number;
                 const isCenter = node.isCenter as boolean;
                 const color = nodeColor(node);
@@ -1206,6 +1264,21 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                   ctx.strokeRect(cardX, cardY, CARD_W, CARD_H);
                   ctx.setLineDash([]);
 
+                  ctx.restore();
+                  return;
+                }
+
+                const labelHidden = lowPowerGraph && !isCenter && !focusedNodeId && globalScale < 0.72;
+                if (labelHidden) {
+                  const r = nodeCircleRadius(Math.abs(d), false);
+                  const nx = node.x as number;
+                  const ny = node.y as number;
+                  ctx.save();
+                  ctx.globalAlpha = isDimmed ? 0.18 : 1;
+                  ctx.beginPath();
+                  ctx.arc(nx, ny, r, 0, 2 * Math.PI);
+                  ctx.fillStyle = color;
+                  ctx.fill();
                   ctx.restore();
                   return;
                 }
@@ -1277,6 +1350,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 });
               }}
               onRenderFramePost={(ctx: CanvasRenderingContext2D, globalScale: number) => {
+                syncCardOverlayTransform();
                 const line = dragLineRef.current;
                 if (!line) return;
                 ctx.save();
@@ -1322,6 +1396,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 onNodeRightClick?.(node.id as string);
               }}
               onNodeHover={(node: any) => {
+                if (lowPowerGraph) return;
                 if (focusedNodeId) return;
                 setHoverNodeId(node?.id ?? null);
               }}
@@ -1388,7 +1463,9 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 }
               }}
               cooldownTicks={1}
-              enableNodeDrag
+              onZoom={syncCardOverlayTransform}
+              onZoomEnd={syncCardOverlayTransform}
+              enableNodeDrag={!isTouchDevice}
               enableZoomInteraction
               nodeLabel="name"
               minZoom={0.2}
@@ -1425,6 +1502,8 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                       pointerEvents: 'auto',
                       cursor: 'pointer',
                       overflow: 'hidden',
+                      display: 'flex',
+                      flexDirection: 'column',
                     }}
                     onClick={(e) => {
                       if (e.ctrlKey || e.metaKey) {
@@ -1443,7 +1522,22 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                   >
                     <div
                       style={{
-                        height: '100%',
+                        padding: `3px ${CARD_PAD_X}px`,
+                        borderBottom: '1px solid rgba(0,0,0,0.08)',
+                        fontWeight: 700,
+                        fontSize: '8px',
+                        color: '#111827',
+                        flexShrink: 0,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {node.name as string}
+                    </div>
+                    <div
+                      style={{
+                        flex: 1,
                         overflowY: 'auto',
                         padding: `${CARD_PAD_Y}px ${CARD_PAD_X}px`,
                         fontSize: '7px',
