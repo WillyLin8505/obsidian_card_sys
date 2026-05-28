@@ -140,7 +140,7 @@ const ZOOM_FIT_MIN_PADDING = 14;
 const ZOOM_FIT_MAX_PADDING = 36;
 
 // Card mode
-const CARD_W = 130;
+const CARD_W = 200;
 const CARD_H = 100;
 const CARD_PAD_X = 7;
 const CARD_PAD_Y = 5;
