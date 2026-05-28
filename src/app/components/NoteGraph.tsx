@@ -975,9 +975,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     };
   }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories, cardMode]);
 
-  const lowPowerGraph = isTouchDevice || dims.width <= TABLET_GRAPH_WIDTH || visibleGraphData.nodes.length > 120;
-  const renderFullMarkdownCards = cardMode && !lowPowerGraph && visibleGraphData.nodes.length <= FULL_MARKDOWN_CARD_LIMIT;
-
   const visibleCardContentMap = useMemo(() => {
     if (!cardMode) return new Map<string, string>();
     const visibleIds = new Set(visibleGraphData.nodes.map((node: any) => node.id as string));
@@ -985,19 +982,15 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     allNotes.forEach(note => {
       if (!visibleIds.has(note.id)) return;
       const raw = note.content || '';
-      if (renderFullMarkdownCards) {
-        const withoutFm = raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
-        const withoutLeadingHeading = withoutFm.replace(/^#{1,6}[^\n]*\n?/, '').trimStart();
-        map.set(
-          note.id,
-          withoutLeadingHeading.replace(/\[\[([^\]|#\n]+?)(?:\|([^\]]+))?\]\]/g, (_m, tgt, alias) => alias || (tgt.split('/').pop() ?? tgt)),
-        );
-      } else {
-        map.set(note.id, compactCardText(raw));
-      }
+      const withoutFm = raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
+      const withoutLeadingHeading = withoutFm.replace(/^#{1,6}[^\n]*\n?/, '').trimStart();
+      map.set(
+        note.id,
+        withoutLeadingHeading.replace(/\[\[([^\]|#\n]+?)(?:\|([^\]]+))?\]\]/g, (_m, tgt, alias) => alias || (tgt.split('/').pop() ?? tgt)),
+      );
     });
     return map;
-  }, [allNotes, cardMode, renderFullMarkdownCards, visibleGraphData.nodes]);
+  }, [allNotes, cardMode, visibleGraphData.nodes]);
 
   const highlightIds = useMemo(() => {
     const rootId = focusedNodeId ?? hoverNodeId;
@@ -1486,7 +1479,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               {(visibleGraphData.nodes as any[]).map((node: any) => {
                 const id = node.id as string;
                 const content = visibleCardContentMap.get(id) ?? '';
-                const title = node.name as string;
                 const isDimmed = Boolean(highlightIds && !highlightIds.has(id));
                 const nx = (node.x ?? 0) as number;
                 const ny = (node.y ?? 0) as number;
@@ -1548,45 +1540,34 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                       }}
                       onWheel={(e) => e.stopPropagation()}
                     >
-                      {renderFullMarkdownCards ? (
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkBreaks]}
-                          components={{
-                            h1: ({ children }) => <div style={{ fontWeight: 700, fontSize: '9px', marginBottom: '2px' }}>{children}</div>,
-                            h2: ({ children }) => <div style={{ fontWeight: 700, fontSize: '8.5px', marginBottom: '2px' }}>{children}</div>,
-                            h3: ({ children }) => <div style={{ fontWeight: 600, fontSize: '8px', marginBottom: '1px' }}>{children}</div>,
-                            h4: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7.5px' }}>{children}</div>,
-                            h5: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7px' }}>{children}</div>,
-                            h6: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7px' }}>{children}</div>,
-                            p: ({ children }) => <div style={{ marginBottom: '3px' }}>{children}</div>,
-                            ul: ({ children }) => <ul style={{ paddingLeft: '9px', marginBottom: '3px', listStyleType: 'disc' }}>{children}</ul>,
-                            ol: ({ children }) => <ol style={{ paddingLeft: '9px', marginBottom: '3px' }}>{children}</ol>,
-                            li: ({ children }) => <li style={{ marginBottom: '1px' }}>{children}</li>,
-                            strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
-                            em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
-                            code: ({ children }) => <code style={{ background: 'rgba(0,0,0,0.08)', borderRadius: '2px', padding: '0 2px', fontSize: '6.5px', fontFamily: 'monospace' }}>{children}</code>,
-                            pre: ({ children }) => <pre style={{ background: 'rgba(0,0,0,0.05)', borderRadius: '3px', padding: '3px', overflowX: 'auto', fontSize: '6.5px', marginBottom: '3px' }}>{children}</pre>,
-                            blockquote: ({ children }) => <blockquote style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '4px', margin: '2px 0', opacity: 0.8 }}>{children}</blockquote>,
-                            hr: () => <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '3px 0' }} />,
-                            a: ({ children }) => <span style={{ color: '#6366f1' }}>{children}</span>,
-                            img: () => null,
-                            table: ({ children }) => <table style={{ fontSize: '6px', borderCollapse: 'collapse', marginBottom: '3px' }}>{children}</table>,
-                            th: ({ children }) => <th style={{ border: '1px solid #e2e8f0', padding: '1px 3px', fontWeight: 600 }}>{children}</th>,
-                            td: ({ children }) => <td style={{ border: '1px solid #e2e8f0', padding: '1px 3px' }}>{children}</td>,
-                          }}
-                        >
-                          {content}
-                        </ReactMarkdown>
-                      ) : (
-                        <>
-                          <div style={{ fontWeight: 700, fontSize: `${CARD_TITLE_FONT}px`, color: '#111827', marginBottom: '3px' }}>
-                            {title.length > CARD_TITLE_MAX_CHARS ? `${title.slice(0, CARD_TITLE_MAX_CHARS)}...` : title}
-                          </div>
-                          <div style={{ fontSize: `${CARD_BODY_FONT}px`, lineHeight: 1.45 }}>
-                            {content || ' '}
-                          </div>
-                        </>
-                      )}
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkBreaks]}
+                        components={{
+                          h1: ({ children }) => <div style={{ fontWeight: 700, fontSize: '9px', marginBottom: '2px' }}>{children}</div>,
+                          h2: ({ children }) => <div style={{ fontWeight: 700, fontSize: '8.5px', marginBottom: '2px' }}>{children}</div>,
+                          h3: ({ children }) => <div style={{ fontWeight: 600, fontSize: '8px', marginBottom: '1px' }}>{children}</div>,
+                          h4: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7.5px' }}>{children}</div>,
+                          h5: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7px' }}>{children}</div>,
+                          h6: ({ children }) => <div style={{ fontWeight: 600, fontSize: '7px' }}>{children}</div>,
+                          p: ({ children }) => <div style={{ marginBottom: '3px' }}>{children}</div>,
+                          ul: ({ children }) => <ul style={{ paddingLeft: '9px', marginBottom: '3px', listStyleType: 'disc' }}>{children}</ul>,
+                          ol: ({ children }) => <ol style={{ paddingLeft: '9px', marginBottom: '3px' }}>{children}</ol>,
+                          li: ({ children }) => <li style={{ marginBottom: '1px' }}>{children}</li>,
+                          strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
+                          em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+                          code: ({ children }) => <code style={{ background: 'rgba(0,0,0,0.08)', borderRadius: '2px', padding: '0 2px', fontSize: '6.5px', fontFamily: 'monospace' }}>{children}</code>,
+                          pre: ({ children }) => <pre style={{ background: 'rgba(0,0,0,0.05)', borderRadius: '3px', padding: '3px', overflowX: 'auto', fontSize: '6.5px', marginBottom: '3px' }}>{children}</pre>,
+                          blockquote: ({ children }) => <blockquote style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '4px', margin: '2px 0', opacity: 0.8 }}>{children}</blockquote>,
+                          hr: () => <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '3px 0' }} />,
+                          a: ({ children }) => <span style={{ color: '#6366f1' }}>{children}</span>,
+                          img: () => null,
+                          table: ({ children }) => <table style={{ fontSize: '6px', borderCollapse: 'collapse', marginBottom: '3px' }}>{children}</table>,
+                          th: ({ children }) => <th style={{ border: '1px solid #e2e8f0', padding: '1px 3px', fontWeight: 600 }}>{children}</th>,
+                          td: ({ children }) => <td style={{ border: '1px solid #e2e8f0', padding: '1px 3px' }}>{children}</td>,
+                        }}
+                      >
+                        {content}
+                      </ReactMarkdown>
                     </div>
                   </div>
                 );
