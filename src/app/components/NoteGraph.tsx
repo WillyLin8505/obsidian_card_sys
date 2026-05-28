@@ -975,6 +975,8 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     };
   }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories, cardMode]);
 
+  const lowPowerGraph = isTouchDevice || dims.width <= TABLET_GRAPH_WIDTH || visibleGraphData.nodes.length > 120;
+
   const visibleCardContentMap = useMemo(() => {
     if (!cardMode) return new Map<string, string>();
     const visibleIds = new Set(visibleGraphData.nodes.map((node: any) => node.id as string));
