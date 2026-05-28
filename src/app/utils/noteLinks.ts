@@ -131,7 +131,7 @@ export function parseFrontmatterLinks(content: string): string[] {
   const values: string[] = [];
   const fields = ['connect', 'connections', 'links', 'link', '連結'];
   const fieldPattern = fields.map(field => field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  const blockRe = new RegExp(`^(${fieldPattern}):\\s*(.*)$`, 'gmi');
+  const blockRe = new RegExp(`^(${fieldPattern}):[ \\t]*(.*)$`, 'gmi');
   let fieldMatch: RegExpExecArray | null;
 
   while ((fieldMatch = blockRe.exec(fm)) !== null) {

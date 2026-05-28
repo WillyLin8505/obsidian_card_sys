@@ -49,6 +49,24 @@ function extractAbstract(content: string): string {
   return match[1].match(/^abstract:\s*(.+)$/m)?.[1]?.trim() ?? '';
 }
 
+function extractSnippet(content: string): string {
+  const abstract = extractAbstract(content);
+  if (abstract) return abstract;
+  const withoutFm = content.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
+  return withoutFm
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1')
+    .replace(/`[^`]+`/g, '')
+    .replace(/^#+\s*/mg, '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 2)
+    .slice(0, 5)
+    .join(' ')
+    .slice(0, 160);
+}
+
 const SLIDER_H = 28;
 
 function noteName(id: string): string {
@@ -118,6 +136,17 @@ const COL_NODE_GAP = 4;        // min gap between prev column's label right edge
 const ZOOM_FIT_MIN_PADDING = 14;
 const ZOOM_FIT_MAX_PADDING = 36;
 
+// Card mode
+const CARD_W = 130;
+const CARD_H = 100;
+const CARD_PAD_X = 7;
+const CARD_PAD_Y = 5;
+const CARD_TITLE_FONT = 9;
+const CARD_BODY_FONT = 7;
+const CARD_BODY_MAX_LINES = 3;
+const CARD_TITLE_MAX_CHARS = 16;
+const CARD_BODY_MAX_CHARS = 22;
+
 function nodeCircleRadius(depth: number, isCenter = false) {
   return isCenter ? 7 : Math.max(3, 6 - Math.abs(depth));
 }
@@ -150,13 +179,23 @@ function labelBoxMetrics(node: any, ctx: CanvasRenderingContext2D) {
   return { r, nx, ny, lines, lineH, labelX, labelCy, boxX, boxY, boxW, boxH };
 }
 
-function estimatedLabelBoxBounds(node: any) {
-  const d = node.depth as number;
-  const isCenter = node.isCenter as boolean;
-  const isIncoming = d < 0;
-  const r = nodeCircleRadius(Math.abs(d), isCenter);
+function estimatedLabelBoxBounds(node: any, cardMode = false) {
   const nx = Number(node.x ?? 0);
   const ny = Number(node.y ?? 0);
+
+  if (cardMode) {
+    const cardH = CARD_H;
+    return {
+      left: nx - CARD_W / 2,
+      right: nx + CARD_W / 2,
+      top: ny - cardH / 2,
+      bottom: ny + cardH / 2,
+    };
+  }
+
+  const d = node.depth as number;
+  const isCenter = node.isCenter as boolean;
+  const r = nodeCircleRadius(Math.abs(d), isCenter);
   const name = node.name as string;
   const fontSize = isCenter ? 9 : 7;
   const lines = wrapLabel(name, LABEL_MAX_CHARS);
@@ -178,7 +217,10 @@ function estimatedLabelBoxBounds(node: any) {
   };
 }
 
-function getNodeLabelH(node: any): number {
+function getNodeLabelH(node: any, cardMode = false): number {
+  if (cardMode) {
+    return CARD_H;
+  }
   const fontSize = (node.isCenter as boolean) ? 9 : 7;
   const lineH = fontSize + 2;
   const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS);
@@ -190,6 +232,7 @@ function getNodeLabelH(node: any): number {
 function computeFocusedLayout(
   nodes: any[],
   highlightIds: Set<string>,
+  cardMode = false,
 ): Map<string, { x: number; y: number }> {
   const layout = new Map<string, { x: number; y: number }>();
 
@@ -219,7 +262,7 @@ function computeFocusedLayout(
     function packGroup(group: any[]): Array<{ id: string; y: number }> {
       const ys: number[] = [0];
       for (let i = 1; i < group.length; i++) {
-        const minDist = (getNodeLabelH(group[i - 1]) + getNodeLabelH(group[i])) / 2 + LABEL_BOX_GAP;
+        const minDist = (getNodeLabelH(group[i - 1], cardMode) + getNodeLabelH(group[i], cardMode)) / 2 + LABEL_BOX_GAP;
         ys.push(ys[i - 1] + minDist);
       }
       const mid = group.length > 1 ? (ys[0] + ys[ys.length - 1]) / 2 : 0;
@@ -227,8 +270,8 @@ function computeFocusedLayout(
     }
 
     const hlPacked = packGroup(highlighted);
-    const hlTop = hlPacked[0].y - getNodeLabelH(highlighted[0]) / 2;
-    const hlBot = hlPacked[hlPacked.length - 1].y + getNodeLabelH(highlighted[highlighted.length - 1]) / 2;
+    const hlTop = hlPacked[0].y - getNodeLabelH(highlighted[0], cardMode) / 2;
+    const hlBot = hlPacked[hlPacked.length - 1].y + getNodeLabelH(highlighted[highlighted.length - 1], cardMode) / 2;
 
     hlPacked.forEach(r => layout.set(r.id, { x: cx, y: r.y }));
 
@@ -238,14 +281,14 @@ function computeFocusedLayout(
 
     if (dimAbove.length > 0) {
       const packed  = packGroup(dimAbove);
-      const packBot = packed[packed.length - 1].y + getNodeLabelH(dimAbove[dimAbove.length - 1]) / 2;
+      const packBot = packed[packed.length - 1].y + getNodeLabelH(dimAbove[dimAbove.length - 1], cardMode) / 2;
       const shift   = hlTop - FOCUS_GAP - packBot;
       packed.forEach(r => layout.set(r.id, { x: cx, y: r.y + shift }));
     }
 
     if (dimBelow.length > 0) {
       const packed   = packGroup(dimBelow);
-      const packTop  = packed[0].y - getNodeLabelH(dimBelow[0]) / 2;
+      const packTop  = packed[0].y - getNodeLabelH(dimBelow[0], cardMode) / 2;
       const shift    = hlBot + FOCUS_GAP - packTop;
       packed.forEach(r => layout.set(r.id, { x: cx, y: r.y + shift }));
     }
@@ -274,6 +317,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [graphVisible, setGraphVisible] = useState(false);
+  const [cardMode, setCardMode] = useState(false);
   const [isClassifying, setIsClassifying] = useState(false);
   const [classificationError, setClassificationError] = useState('');
   const [categoryByNodeId, setCategoryByNodeId] = useState<Record<string, string>>({});
@@ -330,6 +374,11 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     el.addEventListener('wheel', handler, { passive: false, capture: true });
     return () => el.removeEventListener('wheel', handler, { capture: true });
   }, [isTouchDevice]);
+
+  const noteContentMap = useMemo(
+    () => new Map(allNotes.map(n => [n.id, extractSnippet(n.content || '')])),
+    [allNotes],
+  );
 
   const { nameToId, noteIds } = useMemo(() => {
     const nameToId = new Map<string, string>();
@@ -493,6 +542,10 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
     // Returns the rendered label box height for a given node.
     function labelBoxH(id: string): number {
+      if (cardMode) {
+        const node = { name: displayName(id), isCenter: centerSet.has(id), snippet: noteContentMap.get(id) || '' };
+        return getNodeLabelH(node, true);
+      }
       const isCenter = centerSet.has(id);
       const fontSize = isCenter ? 9 : 7;
       const lineH = fontSize + 2;
@@ -500,18 +553,16 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       return lines.length * lineH + LABEL_PAD_Y;
     }
 
-    // Estimate canvas text width conservatively.
-    // Use 7px/char to handle CJK full-width characters at 7px sans-serif,
-    // and 9px/char for bold 9px center nodes.
     function estimateTextWidth(id: string): number {
+      if (cardMode) return CARD_W / 2;
       const isCenter = centerSet.has(id);
       const lines = wrapLabel(displayName(id), LABEL_MAX_CHARS);
       const maxLen = Math.max(...lines.map(l => l.length));
       return maxLen * (isCenter ? 9 : 7);
     }
 
-    // Offset from node centre to the right edge of its label box.
     function labelBoxRightOffset(id: string, d: number): number {
+      if (cardMode) return CARD_W / 2;
       const r = nodeCircleRadius(d, centerSet.has(id));
       return r + LABEL_NODE_MIN_GAP + estimateTextWidth(id) + LABEL_PAD_X / 2;
     }
@@ -525,9 +576,9 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       const maxRight = prevIds.length > 0
         ? Math.max(...prevIds.map(id => labelBoxRightOffset(id, d - 1)))
         : 60;
-      const maxNextR = curIds.length > 0
-        ? Math.max(...curIds.map(id => nodeCircleRadius(d, centerSet.has(id))))
-        : 4;
+      const maxNextR = cardMode
+        ? CARD_W / 2
+        : (curIds.length > 0 ? Math.max(...curIds.map(id => nodeCircleRadius(d, centerSet.has(id)))) : 4);
       columnX.push(columnX[d - 1] + maxRight + COL_NODE_GAP + maxNextR);
     }
 
@@ -541,12 +592,12 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       const curIds = nodesByDepth.get(-d) ?? [];
       const prevAbsDepth = d === 1 ? 0 : d - 1;
       // Include the center node glow (+3) in the effective radius for d=1
-      const maxPrevR = prevIds.length > 0
-        ? Math.max(...prevIds.map(id => nodeCircleRadius(prevAbsDepth, centerSet.has(id)) + (centerSet.has(id) ? 3 : 0)))
-        : 10;
+      const maxPrevR = cardMode
+        ? CARD_W / 2
+        : (prevIds.length > 0 ? Math.max(...prevIds.map(id => nodeCircleRadius(prevAbsDepth, centerSet.has(id)) + (centerSet.has(id) ? 3 : 0))) : 10);
       const maxCurLabelRight = curIds.length > 0
         ? Math.max(...curIds.map(id => labelBoxRightOffset(id, d)))
-        : 60;
+        : (cardMode ? CARD_W / 2 : 60);
       inColumnX.push(inColumnX[d - 1] - maxPrevR - IN_COL_GAP - maxCurLabelRight);
     }
 
@@ -678,6 +729,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         depth: d,
         isCenter: centerSet.has(id),
         isIncoming: d < 0,
+        snippet: noteContentMap.get(id) || '',
         x: pos.x,
         y: pos.y,
         fx: pos.x,
@@ -708,7 +760,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     });
 
     return { nodes, links };
-  }, [allNotes, centerNoteIds, centerSet, outMap, inMap, missingNodeNames, computedDepth, noteIds, limitedCategoryByNodeId]);
+  }, [allNotes, centerNoteIds, centerSet, outMap, inMap, missingNodeNames, computedDepth, noteIds, limitedCategoryByNodeId, cardMode, noteContentMap]);
 
   const categoryList = useMemo(() => {
     const categories = graphData.nodes
@@ -756,6 +808,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     });
 
     function labelBoxH(node: any): number {
+      if (cardMode) return getNodeLabelH(node, true);
       const fontSize = node.isCenter ? 9 : 7;
       const lineH = fontSize + 2;
       const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS);
@@ -763,12 +816,14 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     }
 
     function estimateTextWidth(node: any): number {
+      if (cardMode) return CARD_W / 2;
       const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS);
       const maxLen = Math.max(...lines.map(l => l.length));
       return maxLen * (node.isCenter ? 9 : 7);
     }
 
     function labelBoxRightOffset(node: any): number {
+      if (cardMode) return CARD_W / 2;
       const r = nodeCircleRadius(node.depth as number, node.isCenter as boolean);
       return r + LABEL_NODE_MIN_GAP + estimateTextWidth(node) + LABEL_PAD_X / 2;
     }
@@ -779,9 +834,9 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       const prevNodes = nodesByDepth.get(d - 1) ?? [];
       const curNodes = nodesByDepth.get(d) ?? [];
       const maxRight = prevNodes.length > 0 ? Math.max(...prevNodes.map(labelBoxRightOffset)) : 60;
-      const maxNextR = curNodes.length > 0
-        ? Math.max(...curNodes.map((node: any) => nodeCircleRadius(d, node.isCenter as boolean)))
-        : 4;
+      const maxNextR = cardMode
+        ? CARD_W / 2
+        : (curNodes.length > 0 ? Math.max(...curNodes.map((node: any) => nodeCircleRadius(d, node.isCenter as boolean))) : 4);
       columnX.push(columnX[d - 1] + maxRight + COL_NODE_GAP + maxNextR);
     }
 
@@ -853,7 +908,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         return { ...link, source: sourceId, target: targetId };
       }).filter((link: any) => nodeById.has(link.source) && nodeById.has(link.target)),
     };
-  }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories]);
+  }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories, cardMode]);
 
   const highlightIds = useMemo(() => {
     const rootId = focusedNodeId ?? hoverNodeId;
@@ -951,7 +1006,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     const nodes = visibleGraphData.nodes;
     if (!fg || nodes.length === 0 || dims.width <= 0 || dims.height <= 0) return;
 
-    const bounds = nodes.map(estimatedLabelBoxBounds);
+    const bounds = nodes.map((n: any) => estimatedLabelBoxBounds(n, cardMode));
     const left = Math.min(...bounds.map(b => b.left));
     const right = Math.max(...bounds.map(b => b.right));
     const top = Math.min(...bounds.map(b => b.top));
@@ -972,7 +1027,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
     fg.centerAt((left + right) / 2, (top + bottom) / 2, 300);
     fg.zoom(zoom, 300);
-  }, [dims.height, dims.width, visibleGraphData]);
+  }, [dims.height, dims.width, visibleGraphData, cardMode]);
 
   // Stable key: changes only when the set of visible node IDs changes (not on content updates)
   const graphTopologyKey = useMemo(
@@ -985,7 +1040,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   useLayoutEffect(() => {
     const nodes = visibleGraphData.nodes;
     if (focusedNodeId && highlightIds && highlightIds.size > 0) {
-      const focusedLayout = computeFocusedLayout(nodes, highlightIds);
+      const focusedLayout = computeFocusedLayout(nodes, highlightIds, cardMode);
       const next = new Map<string, any>();
       nodes.forEach((node: any) => {
         const pos = focusedLayout.get(node.id as string);
@@ -1001,7 +1056,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     } else {
       desiredNodeLayoutRef.current = new Map(nodes.map((node: any) => [node.id as string, { ...node }]));
     }
-  }, [visibleGraphData, focusedNodeId, highlightIds]);
+  }, [visibleGraphData, focusedNodeId, highlightIds, cardMode]);
 
   // Only mark for reveal when topology (node set) actually changes
   useLayoutEffect(() => {
@@ -1097,6 +1152,68 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
                 const isCenter = node.isCenter as boolean;
                 const color = nodeColor(node);
                 const isDimmed = Boolean(highlightIds && !highlightIds.has(node.id as string));
+
+                if (cardMode) {
+                  const nx = node.x as number;
+                  const ny = node.y as number;
+                  const snippet = (node.snippet as string) || '';
+                  const titleLines = wrapLabel(node.name as string, CARD_TITLE_MAX_CHARS);
+                  const bodyLines = snippet ? wrapLabel(snippet, CARD_BODY_MAX_CHARS).slice(0, CARD_BODY_MAX_LINES) : [];
+                  const titleLineH = CARD_TITLE_FONT + 2;
+                  const bodyLineH = CARD_BODY_FONT + 2;
+                  const titleH = titleLines.length * titleLineH;
+                  const bodyH = bodyLines.length * bodyLineH;
+                  const cardGap = bodyLines.length > 0 ? 4 : 0;
+                  const cardX = nx - CARD_W / 2;
+                  const cardY = ny - CARD_H / 2;
+
+                  ctx.save();
+                  ctx.globalAlpha = isDimmed ? 0.2 : 1;
+
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillRect(cardX, cardY, CARD_W, CARD_H);
+                  ctx.fillStyle = hexToRgba(color, 0.1);
+                  ctx.fillRect(cardX, cardY, CARD_W, CARD_H);
+
+                  ctx.lineWidth = isCenter ? 1.5 : 0.8;
+                  ctx.strokeStyle = color;
+                  if (d < 0) ctx.setLineDash([2, 2]);
+                  ctx.strokeRect(cardX, cardY, CARD_W, CARD_H);
+                  ctx.setLineDash([]);
+
+                  ctx.font = `bold ${CARD_TITLE_FONT}px sans-serif`;
+                  ctx.fillStyle = readableCategoryTextColor(color);
+                  ctx.textBaseline = 'middle';
+                  ctx.textAlign = 'left';
+                  let textY = cardY + CARD_PAD_Y + titleLineH / 2;
+                  titleLines.forEach(line => {
+                    ctx.fillText(line, cardX + CARD_PAD_X, textY, CARD_W - CARD_PAD_X * 2);
+                    textY += titleLineH;
+                  });
+
+                  if (bodyLines.length > 0) {
+                    textY += 1.5;
+                    ctx.globalAlpha = isDimmed ? 0.1 : 0.25;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(cardX + CARD_PAD_X, textY);
+                    ctx.lineTo(cardX + CARD_W - CARD_PAD_X, textY);
+                    ctx.stroke();
+                    ctx.globalAlpha = isDimmed ? 0.2 : 1;
+                    textY += 2.5;
+
+                    ctx.font = `${CARD_BODY_FONT}px sans-serif`;
+                    ctx.fillStyle = hexToRgba(readableCategoryTextColor(color), 0.65);
+                    bodyLines.forEach((line, i) => {
+                      ctx.fillText(line, cardX + CARD_PAD_X, textY + bodyLineH / 2 + i * bodyLineH, CARD_W - CARD_PAD_X * 2);
+                    });
+                  }
+
+                  ctx.restore();
+                  return;
+                }
+
                 const { r, nx, ny, lines, lineH, labelX, labelCy, boxX, boxY, boxW, boxH } = labelBoxMetrics(node, ctx);
 
                 // Node circle
@@ -1134,7 +1251,14 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
               }}
               nodeCanvasObjectMode={() => 'replace'}
               nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
-                const { r, nx, ny, boxX, boxY, boxW, boxH } = labelBoxMetrics(node, ctx);
+                const nx = node.x as number;
+                const ny = node.y as number;
+                if (cardMode) {
+                  ctx.fillStyle = color;
+                  ctx.fillRect(nx - CARD_W / 2, ny - CARD_H / 2, CARD_W, CARD_H);
+                  return;
+                }
+                const { r, boxX, boxY, boxW, boxH } = labelBoxMetrics(node, ctx);
                 ctx.fillStyle = color;
                 ctx.beginPath();
                 ctx.arc(nx, ny, r + 3, 0, 2 * Math.PI);
@@ -1282,6 +1406,17 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         className="shrink-0 border-t border-gray-200 bg-slate-50"
       >
         <div className="flex items-center gap-2 px-3 py-1.5">
+          <button
+            type="button"
+            onClick={() => setCardMode(v => !v)}
+            className={`h-8 rounded border px-3 text-xl font-medium ${
+              cardMode
+                ? 'border-blue-300 bg-blue-50 text-blue-600'
+                : 'border-gray-200 bg-white text-gray-500'
+            }`}
+          >
+            卡片模式
+          </button>
           <button
             type="button"
             onClick={classifyVisibleNotes}

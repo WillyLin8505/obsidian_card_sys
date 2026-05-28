@@ -181,7 +181,7 @@ function parseNoteLinks(content) {
     const raw = frontmatter[1];
     const fields = ['connect', 'connections', 'links', 'link', '連結'];
     const fieldPattern = fields.map(field => field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    const fieldRe = new RegExp(`^(${fieldPattern}):\\s*(.*)$`, 'gmi');
+    const fieldRe = new RegExp(`^(${fieldPattern}):[ \\t]*(.*)$`, 'gmi');
     let match;
     while ((match = fieldRe.exec(raw)) !== null) {
       const rest = match[2].trim();
