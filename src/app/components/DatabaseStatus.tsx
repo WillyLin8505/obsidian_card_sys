@@ -92,9 +92,17 @@ export function DatabaseStatus() {
   if (status === 'checking') {
     return (
       <div className="fixed bottom-4 right-4 bg-blue-50 border border-blue-200 rounded-lg p-4 shadow-lg max-w-md">
-        <div className="flex items-center gap-3">
-          <RefreshCw className="size-5 text-blue-600 animate-spin" />
-          <span className="text-sm text-blue-900">檢查資料庫狀態...</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <RefreshCw className="size-5 text-blue-600 animate-spin" />
+            <span className="text-sm text-blue-900">檢查資料庫狀態...</span>
+          </div>
+          <button
+            onClick={() => setDismissed(true)}
+            className="shrink-0 size-6 flex items-center justify-center rounded hover:bg-blue-200 text-blue-500 hover:text-blue-800 text-base leading-none"
+          >
+            ×
+          </button>
         </div>
       </div>
     );
@@ -124,7 +132,7 @@ export function DatabaseStatus() {
             </h3>
             <button
               onClick={() => setDismissed(true)}
-              className={`shrink-0 text-lg leading-none ${status === 'error' ? 'text-red-400 hover:text-red-700' : 'text-green-400 hover:text-green-700'}`}
+              className={`shrink-0 size-6 flex items-center justify-center rounded text-base leading-none ${status === 'error' ? 'text-red-500 hover:bg-red-100 hover:text-red-800' : 'text-green-500 hover:bg-green-100 hover:text-green-800'}`}
             >
               ×
             </button>
