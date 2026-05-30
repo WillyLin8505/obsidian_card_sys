@@ -5,13 +5,15 @@ import { assertAllowedVault, resolveUserPath } from '../security.js';
 
 const router = Router();
 
-// 記憶體快取：5 分鐘 TTL，避免 Obsidian 修改後永遠看不到更新
-const CACHE_TTL_MS = 5 * 60 * 1000;
+// 記憶體快取：30 秒 TTL，讓 Obsidian 的新增/改名能快速同步
+const CACHE_TTL_MS = 30_000;
+// 檔案清單快取也用相同 TTL，避免新增的子資料夾/檔案看不到
+const MD_FILE_LIST_TTL_MS = 30_000;
 const notesCache = new Map(); // key: vaultPath + mode, value: { notes, timestamp }
 const assetIndexCache = new Map(); // key: vaultPath, value: { byName, timestamp }
 const assetIndexInflight = new Map(); // key: vaultPath, value: Promise<Map>
 const fileNoteCache = new Map(); // key: vaultPath, value: Map<filePath, { mtimeMs, size, note }>
-const mdFileListCache = new Map(); // key: vaultPath, value: filePath[]
+const mdFileListCache = new Map(); // key: vaultPath, value: { paths: filePath[], timestamp: number }
 
 function notesCacheKey(vaultPath, summary = false) {
   return `${vaultPath}\0${summary ? 'summary' : 'full'}`;
@@ -201,11 +203,13 @@ async function walkMd(dir, files = []) {
 async function getMdFilePaths(vaultPath, forceRefresh = false) {
   if (!forceRefresh) {
     const cached = mdFileListCache.get(vaultPath);
-    if (cached) return cached;
+    if (cached && Date.now() - cached.timestamp < MD_FILE_LIST_TTL_MS) {
+      return cached.paths;
+    }
   }
-  const filePaths = await walkMd(vaultPath);
-  mdFileListCache.set(vaultPath, filePaths);
-  return filePaths;
+  const paths = await walkMd(vaultPath);
+  mdFileListCache.set(vaultPath, { paths, timestamp: Date.now() });
+  return paths;
 }
 
 async function walkFiles(dir, files = []) {
