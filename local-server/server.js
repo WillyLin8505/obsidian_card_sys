@@ -14,6 +14,7 @@ import generateLinkedNotesRouter from './routes/generate-linked-notes.js';
 import expandQueryRouter from './routes/expand-query.js';
 import enrichNoteRouter from './routes/enrich-note.js';
 import fetchUrlRouter from './routes/fetch-url.js';
+import fetchTextRouter from './routes/fetch-text.js';
 import enrichVaultRouter from './routes/enrich-vault.js';
 import classifyNoteTypesRouter from './routes/classify-note-types.js';
 import voiceChatRouter from './routes/voice-chat.js';
@@ -131,10 +132,11 @@ app.use(express.json({ limit: '1mb' }));
 
 const rateLimitRules = [
   { prefix: '/fetch-url', windowMs: 60_000, max: 10 },
+  { prefix: '/fetch-text', windowMs: 60_000, max: 10 },
   { prefix: '/ios-share', windowMs: 60_000, max: 8 },
   { prefix: '/classify-note-types', windowMs: 60_000, max: 8 },
   { prefix: '/enrich-vault', windowMs: 10 * 60_000, max: 1 },
-  { prefix: '/enrich-note', windowMs: 60_000, max: 5 },
+  { prefix: '/enrich-note', windowMs: 60_000, max: 20 },
   { prefix: '/notes/reload', windowMs: 60_000, max: 5 },
   { prefix: '/transcribe', windowMs: 60_000, max: 30 },
   { prefix: '/voice-chat', windowMs: 60_000, max: 30 },
@@ -186,6 +188,7 @@ app.use('/generate-linked-notes', generateLinkedNotesRouter);
 app.use('/expand-query', expandQueryRouter);
 app.use('/enrich-note', enrichNoteRouter);
 app.use('/fetch-url', fetchUrlRouter);
+app.use('/fetch-text', fetchTextRouter);
 app.use('/enrich-vault', enrichVaultRouter);
 app.use('/classify-note-types', classifyNoteTypesRouter);
 app.use('/voice-chat', voiceChatRouter);

@@ -91,15 +91,22 @@ function extractFirstUrl(...values) {
   return extractUrlCandidates(...values)[0] || '';
 }
 
-async function analyzeUrl(url) {
-  const baseUrl = process.env.IOS_SHARE_INTERNAL_API_URL || `http://127.0.0.1:${process.env.PORT || 3001}`;
+function internalApiHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   if (process.env.LOCAL_SERVER_TOKEN) {
     headers['x-local-server-token'] = process.env.LOCAL_SERVER_TOKEN;
   }
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/fetch-url`, {
+  return headers;
+}
+
+function internalBaseUrl() {
+  return (process.env.IOS_SHARE_INTERNAL_API_URL || `http://127.0.0.1:${process.env.PORT || 3001}`).replace(/\/$/, '');
+}
+
+async function analyzeUrl(url) {
+  const response = await fetch(`${internalBaseUrl()}/fetch-url`, {
     method: 'POST',
-    headers,
+    headers: internalApiHeaders(),
     body: JSON.stringify({
       url,
       templateBody: process.env.IOS_SHARE_TEMPLATE_BODY || DEFAULT_TEMPLATE_BODY,
@@ -109,6 +116,24 @@ async function analyzeUrl(url) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || `URL analysis failed (${response.status})`);
+  }
+  return data;
+}
+
+async function analyzeText(text, sourceUrl) {
+  const response = await fetch(`${internalBaseUrl()}/fetch-text`, {
+    method: 'POST',
+    headers: internalApiHeaders(),
+    body: JSON.stringify({
+      text,
+      sourceUrl: sourceUrl || '',
+      templateBody: process.env.IOS_SHARE_TEMPLATE_BODY || DEFAULT_TEMPLATE_BODY,
+    }),
+    signal: AbortSignal.timeout(Number(process.env.IOS_SHARE_ANALYZE_TIMEOUT_MS || 60000)),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `Text analysis failed (${response.status})`);
   }
   return data;
 }
@@ -134,34 +159,45 @@ async function saveLiteratureNote({ title, content, sourceUrl }) {
 }
 
 // POST /ios-share/literature-note
-// Body: { url: string, title?: string, text?: string }
+// URL mode:  { url: string, title?: string }
+// Text mode: { content: string, url?: string, title?: string }
+//   — use when the page requires login (e.g. Threads) or is a JS-rendered SPA.
+//     Pass the copied/scraped post text in `content` and optionally the post URL in `url`.
 router.post('/literature-note', async (req, res) => {
   if (!requireIosShareToken(req, res)) return;
 
-  const rawUrl = extractFirstUrl(req.body?.url, req.body?.text, req.body?.input, req.body);
-  if (!rawUrl) {
-    return res.status(400).json({
-      error: 'url is required。請在 iOS 捷徑先用「Get URLs from Shortcut Input」取出網址，再把第一個 URL 放到 JSON body 的 url 欄位。',
-    });
-  }
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(rawUrl);
-  } catch {
-    return res.status(400).json({ error: '無效的網址格式' });
-  }
-
   const id = randomUUID();
+  const rawContent = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+  const isTextMode = rawContent.length >= 20;
+
   try {
-    const analyzed = await analyzeUrl(parsedUrl.toString());
-    const title = analyzed.title || req.body.title || parsedUrl.hostname;
-    const sourceUrl = analyzed.sourceUrl || parsedUrl.toString();
-    const relativePath = await saveLiteratureNote({
-      title,
-      content: analyzed.content,
-      sourceUrl,
-    });
+    let analyzed, title, sourceUrl;
+
+    if (isTextMode) {
+      const hintUrl = extractFirstUrl(req.body?.url, req.body?.text, req.body?.input) || '';
+      analyzed = await analyzeText(rawContent, hintUrl);
+      title = analyzed.title || req.body.title || 'Threads 貼文';
+      sourceUrl = analyzed.sourceUrl || hintUrl;
+    } else {
+      const rawUrl = extractFirstUrl(req.body?.url, req.body?.text, req.body?.input, req.body);
+      if (!rawUrl) {
+        return res.status(400).json({
+          error: 'url 或 content 必須提供其中一個。' +
+            '傳入純文字請用 content 欄位；傳入網址請用 url 欄位。',
+        });
+      }
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(rawUrl);
+      } catch {
+        return res.status(400).json({ error: '無效的網址格式' });
+      }
+      analyzed = await analyzeUrl(parsedUrl.toString());
+      title = analyzed.title || req.body.title || parsedUrl.hostname;
+      sourceUrl = analyzed.sourceUrl || parsedUrl.toString();
+    }
+
+    const relativePath = await saveLiteratureNote({ title, content: analyzed.content, sourceUrl });
     res.json({
       ok: true,
       id,
@@ -169,7 +205,7 @@ router.post('/literature-note', async (req, res) => {
       sourceUrl,
       relativePath,
       notebookUrl: analyzed.notebookUrl,
-      via: analyzed.via || 'fetch-url',
+      via: analyzed.via || (isTextMode ? 'fetch-text' : 'fetch-url'),
     });
   } catch (err) {
     console.error('[ios-share] failed:', err.message);
