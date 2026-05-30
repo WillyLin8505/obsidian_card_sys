@@ -126,6 +126,7 @@ export function SourceNotes() {
   const [editUrl, setEditUrl] = useState('');
   const sourceEditContentRef = useRef('');
   const lastSavedSnapshotRef = useRef('');
+  const deletingNoteIdRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const syncingScrollRef = useRef(false);
@@ -313,6 +314,9 @@ export function SourceNotes() {
 
     setAutoSaveStatus('pending');
     const timer = window.setTimeout(async () => {
+      // Abort if the note is being deleted — prevents race where auto-save re-creates a just-deleted note
+      if (deletingNoteIdRef.current === viewingNote.id) return;
+
       const contentTags = getFrontmatterTags(content);
       const updates = {
         title: editTitle,
@@ -587,8 +591,11 @@ export function SourceNotes() {
   const handleDelete = async () => {
     if (!viewingNote || !confirm('確定要刪除這則文獻筆記嗎？')) return;
 
+    // Set flag before any awaits so the auto-save timer cannot race and re-create this note
+    deletingNoteIdRef.current = viewingNote.id;
     deleteLocalSourceNote(viewingNote.id);
     try { await storage.deleteNote(viewingNote.id); } catch { /* local-only */ }
+    deletingNoteIdRef.current = null;
     setNotes(prev => prev.filter(note => note.id !== viewingNote.id));
     navigate('/source-notes');
   };
