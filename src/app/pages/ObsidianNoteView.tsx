@@ -237,6 +237,7 @@ export function ObsidianNoteView() {
       const fullContent = frontmatter + body;
 
       await localApi.updateNote(relativePath, config.notePath, fullContent);
+      storage.invalidateNotesCache();
       toast.success('已儲存至 Obsidian');
       location.key !== 'default' ? navigate(-1) : navigate('/permanent-notes');
     } catch (error: any) {
