@@ -459,6 +459,16 @@ router.post('/', async (req, res) => {
       const html = await directRes.text();
       text = extractText(html);
       elapsed(`text extracted (${text.length} chars)`);
+      // JS-rendered SPAs (e.g. Threads) return 200 but hide content in <script> tags.
+      // extractText strips scripts, leaving near-empty output — fall back to Jina Reader.
+      if (text.length < 100) {
+        console.log(`[fetch-url] extracted text too short (${text.length} chars), trying Jina Reader`);
+        try {
+          text = await fetchViaJina(parsedUrl.toString(), elapsed);
+        } catch (jinaErr) {
+          console.warn(`[fetch-url] Jina fallback failed: ${jinaErr.message}`);
+        }
+      }
     } else if (directRes.status === 404) {
       return res.status(502).json({ error: '無法存取網頁 (HTTP 404)（網址不存在，請確認是否正確）' });
     } else {
