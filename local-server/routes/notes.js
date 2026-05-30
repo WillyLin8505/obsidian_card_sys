@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { readdir, readFile, stat, writeFile, mkdir, realpath, unlink } from 'fs/promises';
-import { join, extname, basename, dirname } from 'path';
+import { join, extname, basename, dirname, isAbsolute, relative } from 'path';
 import { assertAllowedVault, resolveUserPath } from '../security.js';
 
 const router = Router();
@@ -244,7 +244,7 @@ function isSupportedAsset(filePath) {
 function buildNoteFromFile(filePath, vaultPath, content, fileStat) {
   const { meta } = parseFrontmatter(content);
   const fileName = basename(filePath, '.md');
-  const relativePath = filePath.replace(vaultPath, '').replace(/^\//, '');
+  const relativePath = relative(vaultPath, filePath).replace(/\\/g, '/');
 
   return {
     id: relativePath,
@@ -451,7 +451,7 @@ router.get('/asset', async (req, res) => {
 
 // POST /notes — create a new .md file in the vault
 router.post('/', async (req, res) => {
-  const { vaultPath: bodyVaultPath, filename, content } = req.body;
+  const { vaultPath: bodyVaultPath, filename, content, targetDirectory } = req.body;
   if (!bodyVaultPath || !filename || content === undefined) {
     return res.status(400).json({ error: 'vaultPath, filename, and content are required' });
   }
@@ -463,9 +463,13 @@ router.post('/', async (req, res) => {
     return res.status(err.status || 403).json({ error: err.message });
   }
   const safeName = filename.endsWith('.md') ? filename : `${filename}.md`;
-  const filePath = join(vaultPath, safeName);
+  const requestedDirectory = targetDirectory ? resolvePath(targetDirectory) : vaultPath;
+  const destinationDirectory = isAbsolute(requestedDirectory)
+    ? requestedDirectory
+    : join(vaultPath, requestedDirectory);
+  const filePath = join(destinationDirectory, safeName);
 
-  if (!await isWithinVault(vaultPath, filePath)) {
+  if (!await isWithinVault(vaultPath, destinationDirectory) || !await isWithinVault(vaultPath, filePath)) {
     return res.status(403).json({ error: 'Path traversal not allowed' });
   }
 
@@ -473,7 +477,7 @@ router.post('/', async (req, res) => {
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, content, 'utf-8');
     invalidateCache(vaultPath);
-    res.json({ ok: true, relativePath: safeName });
+    res.json({ ok: true, relativePath: relative(vaultPath, filePath).replace(/\\/g, '/') });
   } catch (err) {
     res.status(500).json({ error: `Cannot create file: ${err.message}` });
   }
@@ -491,7 +495,11 @@ router.put('/', async (req, res) => {
   } catch (err) {
     return res.status(err.status || 403).json({ error: err.message });
   }
-  const filePath = join(vaultPath, relativePath);
+  // Guard: if relativePath is already absolute and under vaultPath, extract the relative part
+  const safeRelative = isAbsolute(relativePath) && relativePath.startsWith(vaultPath)
+    ? relative(vaultPath, relativePath).replace(/\\/g, '/')
+    : relativePath;
+  const filePath = join(vaultPath, safeRelative);
 
   if (!await isWithinVault(vaultPath, filePath)) {
     return res.status(403).json({ error: 'Path traversal not allowed' });
@@ -521,7 +529,10 @@ router.delete('/', async (req, res) => {
     return res.status(err.status || 403).json({ error: err.message });
   }
 
-  const filePath = join(vaultPath, relativePath);
+  const safeRel = isAbsolute(relativePath) && relativePath.startsWith(vaultPath)
+    ? relative(vaultPath, relativePath).replace(/\\/g, '/')
+    : relativePath;
+  const filePath = join(vaultPath, safeRel);
   if (!await isWithinVault(vaultPath, filePath)) {
     return res.status(403).json({ error: 'Path traversal not allowed' });
   }
