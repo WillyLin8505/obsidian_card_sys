@@ -483,10 +483,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         }
         if (tid) {
           targets.add(tid);
-        } else if (logicalName) {
-          const id = missingNodeId(logicalName);
-          missingNames.set(id, logicalName);
-          targets.add(id);
         }
       };
 
@@ -508,10 +504,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
           if (tid && tid !== n.id) {
             targets.add(tid);
-          } else if (record.isLocalNote && logicalName) {
-            const id = missingNodeId(logicalName);
-            missingNames.set(id, logicalName);
-            targets.add(id);
           }
         });
         parseFrontmatterLinks(n.content).forEach(addLinkTarget);
