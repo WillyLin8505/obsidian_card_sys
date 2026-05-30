@@ -22,6 +22,7 @@ const LazyMarkdown = lazy(() => import('../components/LazyMarkdown').then(module
 const LOCAL_SRC_KEY = 'zettelkasten_local_source_notes';
 const READ_IDS_KEY = 'zettelkasten_source_read_ids';
 const RESTORE_READING_SUMMARY_TAG_KEY = 'source_notes_restore_reading_tag_v2_20260526';
+const AI_READ_DONE_TAG = 'AI_read_done';
 
 function getFrontmatterTags(content: string): string[] {
   return parseFrontmatterValue(content, 'tags')
@@ -160,14 +161,44 @@ export function SourceNotes() {
   const [readNoteIds, setReadNoteIds] = useState<Set<string>>(() => loadReadIds());
   const [filterMode, setFilterMode] = useState<'all' | 'unread' | 'read'>('all');
 
+  const updateReadTag = async (noteId: string, isRead: boolean) => {
+    const note = notes.find(n => n.id === noteId) ?? getLocalSourceNotes().find(n => n.id === noteId);
+    if (!note) return;
+
+    const hasTag = note.tags.includes(AI_READ_DONE_TAG);
+    if (isRead === hasTag) return;
+
+    const updatedTags = isRead
+      ? [...note.tags, AI_READ_DONE_TAG]
+      : note.tags.filter(t => t !== AI_READ_DONE_TAG);
+    const updatedContent = writeFrontmatterTags(note.content, updatedTags);
+    const updatedAt = new Date().toISOString();
+    const updatedNote = withFrontmatterTags({ ...note, content: updatedContent, tags: updatedTags, updatedAt });
+
+    saveLocalSourceNote(updatedNote);
+    setNotes(prev => sortByRecentActivity(
+      prev.map(n => n.id === noteId ? updatedNote : n).filter(isSourceNote)
+    ));
+
+    if (viewingNote?.id === noteId) {
+      setViewingNote(updatedNote);
+      setEditContent(updatedContent);
+      sourceEditContentRef.current = updatedContent;
+    }
+
+    storage.updateNote(noteId, { content: updatedContent, tags: updatedTags, updatedAt }).catch(() => {});
+  };
+
   const toggleRead = (noteId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const willBeRead = !readNoteIds.has(noteId);
     setReadNoteIds(prev => {
       const next = new Set(prev);
-      if (next.has(noteId)) { next.delete(noteId); } else { next.add(noteId); }
+      if (willBeRead) { next.add(noteId); } else { next.delete(noteId); }
       persistReadIds(next);
       return next;
     });
+    updateReadTag(noteId, willBeRead);
   };
 
   const filteredNotes = useMemo(() => {
@@ -718,6 +749,7 @@ export function SourceNotes() {
       persistReadIds(next);
       return next;
     });
+    selectedNotes.forEach(id => updateReadTag(id, true));
     setContextMenu(null);
   };
 
@@ -728,6 +760,7 @@ export function SourceNotes() {
       persistReadIds(next);
       return next;
     });
+    selectedNotes.forEach(id => updateReadTag(id, false));
     setContextMenu(null);
   };
 
