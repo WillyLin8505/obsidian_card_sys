@@ -224,7 +224,12 @@ export function ObsidianNoteView() {
   };
 
   const handleSave = async () => {
-    if (!relativePath || !config.notePath) return;
+    if (!relativePath) return;
+    if (!config.notePath) {
+      toast.error('請先到「設定」頁面填寫 Obsidian Vault 路徑');
+      navigate('/config');
+      return;
+    }
 
     try {
       const frontmatter = extractFrontmatter(rawContent);
