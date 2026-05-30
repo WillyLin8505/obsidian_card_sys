@@ -4,7 +4,7 @@ import { storage, sortByRecentActivity } from '../utils/storage';
 import { getCardFontSizes } from '../utils/noteCardSizes';
 import { Note } from '../types/note';
 import { NoteCard } from '../components/NoteCard';
-import { ExternalLink, ArrowLeft, Trash2, Link2, Tag as TagIcon, Loader2, Copy, CheckCircle2, Circle } from 'lucide-react';
+import { ExternalLink, ArrowLeft, Trash2, Link2, Tag as TagIcon, Loader2, Copy, CheckCircle2, Circle, Search, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Progress } from '../components/ui/progress';
@@ -161,6 +161,7 @@ export function SourceNotes() {
   // 已讀狀態與篩選
   const [readNoteIds, setReadNoteIds] = useState<Set<string>>(() => loadReadIds());
   const [filterMode, setFilterMode] = useState<'all' | 'unread' | 'read'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const updateReadTag = async (noteId: string, isRead: boolean) => {
     const note = notes.find(n => n.id === noteId) ?? getLocalSourceNotes().find(n => n.id === noteId);
@@ -208,6 +209,17 @@ export function SourceNotes() {
     return notes;
   }, [notes, readNoteIds, filterMode]);
 
+  const searchFilteredNotes = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return filteredNotes;
+    return filteredNotes.filter(n => {
+      if (n.title.toLowerCase().includes(q)) return true;
+      if (n.tags.some(t => t.toLowerCase().includes(q))) return true;
+      if (n.content.slice(0, 500).toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [filteredNotes, searchQuery]);
+
   // 拖曳選取狀態
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -243,7 +255,7 @@ export function SourceNotes() {
     mainEl.addEventListener('scroll', onScroll, { passive: true });
     return () => mainEl.removeEventListener('scroll', onScroll);
   }, [isSelecting, containerRef]);
-  const virtualFilteredNotes = useVirtualGrid(filteredNotes, containerRef, {
+  const virtualFilteredNotes = useVirtualGrid(searchFilteredNotes, containerRef, {
     itemHeight: 312,
     maxColumns: 3,
   });
@@ -461,7 +473,10 @@ export function SourceNotes() {
 
     try {
       const config = storage.getConfig();
-      const template = config.sourceNoteTemplate;
+      const sharedTemplate = await localApi.getSourceNoteTemplate().catch(() => null);
+      const template = sharedTemplate?.configured
+        ? sharedTemplate.template
+        : config.sourceNoteTemplate;
       const templateBody = template?.bodyTemplate;
       const { title, content, sourceUrl } = await localApi.fetchUrl(
         parsedUrl.toString(),
@@ -496,9 +511,8 @@ export function SourceNotes() {
         fullContent = writeFrontmatterTags(fullContent, contentTags);
       }
 
-      const noteId = crypto.randomUUID();
-      const newNote: Note = {
-        id: noteId,
+      let newNote: Note = {
+        id: crypto.randomUUID(),
         title: title || parsedUrl.hostname,
         content: fullContent,
         type: 'source',
@@ -509,38 +523,46 @@ export function SourceNotes() {
         updatedAt: new Date().toISOString(),
       };
 
-      // Save locally first — guaranteed to work
-      saveLocalSourceNote(newNote);
-
-      // Try configured storage in background (Supabase/obsidian)
-      storage.addNote(newNote).then(created => {
-        // If Supabase returns a different ID, update the local record
-        if (created?.id && created.id !== noteId) {
-          deleteLocalSourceNote(noteId);
-          saveLocalSourceNote(created);
-          // Migrate read status: old local UUID → new backend ID
-          setReadNoteIds(prev => {
-            if (!prev.has(noteId)) return prev;
-            const next = new Set(prev);
-            next.delete(noteId);
-            next.add(created.id);
-            persistReadIds(next);
-            return next;
-          });
-          if (isMountedRef.current) loadNotes();
-        }
-      }).catch(err => {
-        console.warn('[SourceNotes] Background sync failed, note saved locally:', err.message);
-      });
-
-      // Save to sourceNoteSavePath if configured
       const saveDir = config.sourceNoteSavePath?.trim();
-      if (saveDir) {
-        const safeTitle = (newNote.title || 'note').replace(/[/\\?%*:|"<>]/g, '-');
-        const filename = `${safeTitle}-${Date.now()}.md`;
-        localApi.createNote(saveDir, filename, fullContent).catch(err => {
-          console.warn('[SourceNotes] Failed to save to sourceNoteSavePath:', err.message);
+      if (config.dataSource === 'obsidian') {
+        try {
+          newNote = await storage.addNote(newNote, { targetDirectory: saveDir || undefined });
+        } catch (err: any) {
+          throw new Error(`文獻筆記 MD 寫入失敗: ${err.message}`);
+        }
+        saveLocalSourceNote(newNote);
+      } else {
+        const localId = newNote.id;
+        saveLocalSourceNote(newNote);
+
+        // Keep cloud/local storage sync in the background, but make configured MD export blocking.
+        storage.addNote(newNote).then(created => {
+          if (created?.id && created.id !== localId) {
+            deleteLocalSourceNote(localId);
+            saveLocalSourceNote(created);
+            setReadNoteIds(prev => {
+              if (!prev.has(localId)) return prev;
+              const next = new Set(prev);
+              next.delete(localId);
+              next.add(created.id);
+              persistReadIds(next);
+              return next;
+            });
+            if (isMountedRef.current) loadNotes();
+          }
+        }).catch(err => {
+          console.warn('[SourceNotes] Background sync failed, note saved locally:', err.message);
         });
+      }
+
+      if (saveDir && config.dataSource !== 'obsidian') {
+        const safeTitle = (newNote.title || 'note').replace(/[/\\?%*:|"<>]/g, '-');
+        const filename = `${safeTitle}.md`;
+        try {
+          await localApi.createNote(saveDir, filename, fullContent);
+        } catch (err: any) {
+          throw new Error(`文獻筆記 MD 匯出失敗: ${err.message}`);
+        }
       }
 
       if (isMountedRef.current) {
@@ -563,7 +585,7 @@ export function SourceNotes() {
         toast.success(`「${newNote.title}」已建立，點擊卡片可查看`, {
           action: {
             label: '開啟',
-            onClick: () => navigate(`/source-notes/${encodeURIComponent(noteId)}`),
+            onClick: () => navigate(`/source-notes/${encodeURIComponent(newNote.id)}`),
           },
         });
       } else {
@@ -1047,6 +1069,23 @@ export function SourceNotes() {
               </button>
             ))}
           </div>
+          <div className="relative mt-3 max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-gray-400 pointer-events-none" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜尋標題、內容、標籤..."
+              className="pl-8 pr-8 h-8 text-sm"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
           {selectedNotes.size > 0 && (
             <p className="text-sm text-blue-600 mt-2">
               已選取 {selectedNotes.size} 則筆記 - 右鍵點擊以顯示操作選單
@@ -1181,11 +1220,13 @@ export function SourceNotes() {
         <div style={getSelectionBoxStyle()!} />
       )}
 
-      {filteredNotes.length === 0 && fetchingCount === 0 && (
+      {searchFilteredNotes.length === 0 && fetchingCount === 0 && (
         <div className="text-center py-12 text-gray-500">
           {notes.length === 0
             ? '尚無文獻筆記，在右上角貼入網址以建立第一則文獻筆記'
-            : filterMode === 'read' ? '沒有已讀的筆記' : '沒有未讀的筆記'
+            : searchQuery
+              ? `找不到符合「${searchQuery}」的筆記`
+              : filterMode === 'read' ? '沒有已讀的筆記' : '沒有未讀的筆記'
           }
         </div>
       )}

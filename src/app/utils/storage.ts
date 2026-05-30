@@ -112,7 +112,7 @@ export const storage = {
     return notes;
   },
 
-  addNote: async (note: Note): Promise<Note> => {
+  addNote: async (note: Note, options?: { targetDirectory?: string }): Promise<Note> => {
     const source = getDataSource();
 
     if (source === 'supabase') {
@@ -131,8 +131,8 @@ export const storage = {
         const vaultPath = config.notePath || '';
         if (!vaultPath) throw new Error('請先在設定頁面填寫 Obsidian Vault 路徑');
         const safeTitle = (note.title || 'new-note').replace(/[/\\?%*:|"<>]/g, '-');
-        const filename = `${safeTitle}-${Date.now()}.md`;
-        const relativePath = await localApi.createNote(vaultPath, filename, note.content);
+        const filename = `${safeTitle}.md`;
+        const relativePath = await localApi.createNote(vaultPath, filename, note.content, options?.targetDirectory);
         clearObsidianCache(vaultPath);
         return { ...note, id: relativePath };
       } catch (error) {

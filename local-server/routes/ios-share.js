@@ -3,16 +3,9 @@ import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join, relative } from 'path';
 import { randomUUID } from 'crypto';
 import { assertAllowedVault, isWithinPath, resolveUserPath } from '../security.js';
+import { buildSourceNoteFrontmatter, loadSourceNoteTemplate } from '../services/source-note-template.js';
 
 const router = Router();
-
-const DEFAULT_TEMPLATE_BODY = `## 來源資訊
-- 作者：
-- 標題：
-- 連結：
-
-## 重點摘要
-`;
 
 function firstConfiguredVault() {
   const raw = process.env.IOS_SHARE_VAULT_PATH ||
@@ -26,23 +19,7 @@ function safeFilename(title) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80) || '文獻筆記';
-  return `${base}-${Date.now()}.md`;
-}
-
-function frontmatter({ sourceUrl, title }) {
-  const today = new Date().toISOString().split('T')[0];
-  const escapedTitle = String(title || '').replace(/"/g, '\\"');
-  return [
-    '---',
-    `create date: ${today}`,
-    `aliases: ${escapedTitle ? `"${escapedTitle}"` : ''}`,
-    'tags:',
-    '  - 3card/筆記法/卡片盒筆記法/文獻筆記',
-    `source: ${sourceUrl || ''}`,
-    'source_type: ios-share',
-    '---',
-    '',
-  ].join('\n');
+  return `${base}.md`;
 }
 
 function requireIosShareToken(req, res) {
@@ -103,13 +80,13 @@ function internalBaseUrl() {
   return (process.env.IOS_SHARE_INTERNAL_API_URL || `http://127.0.0.1:${process.env.PORT || 3001}`).replace(/\/$/, '');
 }
 
-async function analyzeUrl(url) {
+async function analyzeUrl(url, templateBody) {
   const response = await fetch(`${internalBaseUrl()}/fetch-url`, {
     method: 'POST',
     headers: internalApiHeaders(),
     body: JSON.stringify({
       url,
-      templateBody: process.env.IOS_SHARE_TEMPLATE_BODY || DEFAULT_TEMPLATE_BODY,
+      templateBody,
     }),
     signal: AbortSignal.timeout(Number(process.env.IOS_SHARE_ANALYZE_TIMEOUT_MS || 240000)),
   });
@@ -120,14 +97,14 @@ async function analyzeUrl(url) {
   return data;
 }
 
-async function analyzeText(text, sourceUrl) {
+async function analyzeText(text, sourceUrl, templateBody) {
   const response = await fetch(`${internalBaseUrl()}/fetch-text`, {
     method: 'POST',
     headers: internalApiHeaders(),
     body: JSON.stringify({
       text,
       sourceUrl: sourceUrl || '',
-      templateBody: process.env.IOS_SHARE_TEMPLATE_BODY || DEFAULT_TEMPLATE_BODY,
+      templateBody,
     }),
     signal: AbortSignal.timeout(Number(process.env.IOS_SHARE_ANALYZE_TIMEOUT_MS || 60000)),
   });
@@ -138,7 +115,7 @@ async function analyzeText(text, sourceUrl) {
   return data;
 }
 
-async function saveLiteratureNote({ title, content, sourceUrl }) {
+async function saveLiteratureNote({ title, content, sourceUrl, template }) {
   const vaultPath = await assertAllowedVault(firstConfiguredVault());
   const dirFromEnv = process.env.IOS_SHARE_SOURCE_NOTE_DIR || 'Sources/inbox';
   const relativeDir = dirFromEnv.replace(/^[/\\]+/, '').replace(/\\/g, '/');
@@ -152,7 +129,7 @@ async function saveLiteratureNote({ title, content, sourceUrl }) {
     throw err;
   }
 
-  const noteContent = `${frontmatter({ sourceUrl, title })}${String(content || '').trim()}\n`;
+  const noteContent = `${buildSourceNoteFrontmatter(template, { sourceUrl, title })}${String(content || '').trim()}\n`;
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, noteContent, 'utf-8');
   return relative(vaultPath, filePath).replace(/\\/g, '/');
@@ -171,11 +148,13 @@ router.post('/literature-note', async (req, res) => {
   const isTextMode = rawContent.length >= 20;
 
   try {
+    const { template } = await loadSourceNoteTemplate();
+    const templateBody = process.env.IOS_SHARE_TEMPLATE_BODY || template.bodyTemplate;
     let analyzed, title, sourceUrl;
 
     if (isTextMode) {
       const hintUrl = extractFirstUrl(req.body?.url, req.body?.text, req.body?.input) || '';
-      analyzed = await analyzeText(rawContent, hintUrl);
+      analyzed = await analyzeText(rawContent, hintUrl, templateBody);
       title = analyzed.title || req.body.title || 'Threads 貼文';
       sourceUrl = analyzed.sourceUrl || hintUrl;
     } else {
@@ -192,12 +171,12 @@ router.post('/literature-note', async (req, res) => {
       } catch {
         return res.status(400).json({ error: '無效的網址格式' });
       }
-      analyzed = await analyzeUrl(parsedUrl.toString());
+      analyzed = await analyzeUrl(parsedUrl.toString(), templateBody);
       title = analyzed.title || req.body.title || parsedUrl.hostname;
       sourceUrl = analyzed.sourceUrl || parsedUrl.toString();
     }
 
-    const relativePath = await saveLiteratureNote({ title, content: analyzed.content, sourceUrl });
+    const relativePath = await saveLiteratureNote({ title, content: analyzed.content, sourceUrl, template });
     res.json({
       ok: true,
       id,
