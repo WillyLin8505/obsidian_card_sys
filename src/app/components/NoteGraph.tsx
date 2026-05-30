@@ -506,7 +506,6 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
             targets.add(tid);
           }
         });
-        parseFrontmatterLinks(n.content).forEach(addLinkTarget);
         n.links?.forEach(addLinkTarget);
       }
       m.set(n.id, targets);

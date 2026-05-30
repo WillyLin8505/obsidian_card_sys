@@ -164,6 +164,7 @@ function parseNoteLinks(content) {
     if (normalized) links.push(normalized);
   };
 
+  // Only [[wiki links]] and [text](local.md) count as real connections
   for (const match of content.matchAll(/\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g)) {
     add(match[1]);
   }
@@ -174,43 +175,6 @@ function parseNoteLinks(content) {
     const isLocal = !/^[a-z][a-z0-9+.-]*:/i.test(target) && (target.endsWith('.md') || !target.includes('/'));
     if (!isLocal) continue;
     add(target);
-  }
-
-  const frontmatter = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (frontmatter) {
-    const raw = frontmatter[1];
-    const fields = ['connect', 'connections', 'links', 'link', '連結'];
-    const fieldPattern = fields.map(field => field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    const fieldRe = new RegExp(`^(${fieldPattern}):[ \\t]*(.*)$`, 'gmi');
-    let match;
-    while ((match = fieldRe.exec(raw)) !== null) {
-      const rest = match[2].trim();
-      const addFrontmatterValue = (value) => {
-        const text = String(value || '').trim();
-        const wikiLinks = [...text.matchAll(/\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g)];
-        const markdownLinks = [...text.matchAll(/(?<!!)\[([^\]\n]*)]\((<[^>\n]+>|[^)\n]+)\)/g)];
-        if (wikiLinks.length > 0 || markdownLinks.length > 0) {
-          wikiLinks.forEach(link => add(link[1]));
-          markdownLinks.forEach(link => add(link[2]));
-          return;
-        }
-        add(text);
-      };
-      if (rest.startsWith('[') && rest.endsWith(']')) {
-        rest.slice(1, -1).split(',').forEach(addFrontmatterValue);
-      } else if (rest) {
-        addFrontmatterValue(rest);
-      }
-      const afterField = raw.slice(fieldRe.lastIndex);
-      const listMatch = afterField.match(/^\n((?:[ \t]+-[^\n]*\n?)*)/);
-      if (listMatch?.[1]) {
-        listMatch[1]
-          .split('\n')
-          .map(line => line.replace(/^[ \t]+-[ \t]*/, '').trim())
-          .filter(Boolean)
-          .forEach(addFrontmatterValue);
-      }
-    }
   }
 
   return [...new Set(links)];
