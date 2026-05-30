@@ -266,6 +266,19 @@ export function SourceNotes() {
     loadNotes();
   }, []);
 
+  // Reload when the user switches back from Obsidian to this tab
+  useEffect(() => {
+    if (storage.getConfig().dataSource !== 'obsidian') return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        storage.invalidateNotesCache();
+        loadNotes();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
 
   useEffect(() => {
     const loadNote = async () => {
@@ -413,7 +426,17 @@ export function SourceNotes() {
       const mergedById = new Map<string, Note>();
       sourceNotes.forEach(note => mergedById.set(note.id, note));
 
+      const config = storage.getConfig();
+      const isObsidian = config.dataSource === 'obsidian';
+      const backendIds = new Set(sourceNotes.map(n => n.id));
+
       for (const localNote of getLocalSourceNotes().map(withFrontmatterTags)) {
+        // Obsidian: if a local note's ID no longer exists in the vault (renamed/deleted),
+        // drop it from localStorage so the fresh backend copy wins.
+        if (isObsidian && backendIds.size > 0 && !backendIds.has(localNote.id)) {
+          deleteLocalSourceNote(localNote.id);
+          continue;
+        }
         for (const [id, note] of mergedById) {
           if (localNote.sourceUrl && note.sourceUrl === localNote.sourceUrl && id !== localNote.id) {
             mergedById.delete(id);

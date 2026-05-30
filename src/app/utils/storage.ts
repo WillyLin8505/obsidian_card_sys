@@ -4,7 +4,7 @@ import { getConfig, getDataSource, saveConfig } from './appConfig';
 
 const NOTES_KEY = 'zettelkasten_notes';
 const RECENTLY_OPENED_KEY = 'zettelkasten_recently_opened';
-const NOTES_CACHE_TTL_MS = 60_000;
+const NOTES_CACHE_TTL_MS = 15_000;
 
 type NotesOptions = { summary?: boolean; force?: boolean };
 type NotesCacheEntry = { notes: Note[]; timestamp: number };
