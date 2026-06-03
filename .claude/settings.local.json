@@ -74,7 +74,8 @@
       "Bash(node -e \"const rr = require\\(''/mnt/d/vibe_coding_project/Card_Box_Note_Management/node_modules/react-router/dist/development/chunk-H62LQLKQ.cjs''\\); console.log\\(Object.keys\\(rr\\).filter\\(k => k.toLowerCase\\(\\).includes\\(''navigate''\\) || k.toLowerCase\\(\\).includes\\(''router''\\)\\)\\)\")",
       "Bash(grep -n source-notes /mnt/d/vibe_coding_project/Card_Box_Note_Management/src/app/pages/*.tsx)",
       "mcp__plugin_everything-claude-code_playwright__browser_navigate",
-      "mcp__plugin_everything-claude-code_playwright__browser_install"
+      "mcp__plugin_everything-claude-code_playwright__browser_install",
+      "Bash(zsh -lic 'which node npm 2>/dev/null; node -v 2>/dev/null')"
     ]
   }
 }
