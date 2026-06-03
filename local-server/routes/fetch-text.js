@@ -11,6 +11,8 @@ const DEFAULT_TEMPLATE_BODY = `## 來源資訊
 - 連結：
 
 ## 重點摘要
+
+## 文章內容
 `;
 
 function buildSystemPrompt(sourceUrl, templateBody) {
@@ -47,6 +49,9 @@ TITLE: [10字以內的繁體中文標題，反映文章核心主題]
 條列 3–5 個核心觀點，每點一行，格式：**[觀點名稱]**：一句話說明底層原則。
 整個區段總字數不超過 300 字（中文字元計算），不加範例、不加說明段落。
 
+**文章內容**
+保留空白。系統會在分析完成後寫入未經修改的原文。
+
 ## 模板
 
 ${template}`;
@@ -57,6 +62,22 @@ function parseOutput(raw, fallbackTitle) {
   const generatedTitle = titleMatch ? titleMatch[1].trim() : fallbackTitle;
   const content = titleMatch ? raw.replace(/^TITLE:\s*.+\n?\n?/, '').trim() : raw;
   return { generatedTitle, content };
+}
+
+function withOriginalArticleContent(content, originalText) {
+  const original = String(originalText || '').trim();
+  const markdown = String(content || '').trim();
+  const heading = /^##\s+文章內容\s*$/m;
+  const match = heading.exec(markdown);
+
+  if (!match) {
+    return [markdown, '---', '## 文章內容', original].filter(Boolean).join('\n\n');
+  }
+
+  const bodyStart = match.index + match[0].length;
+  const nextHeading = markdown.slice(bodyStart).search(/\n##\s+/);
+  const bodyEnd = nextHeading === -1 ? markdown.length : bodyStart + nextHeading;
+  return `${markdown.slice(0, bodyStart).trimEnd()}\n\n${original}${markdown.slice(bodyEnd)}`.trim();
 }
 
 // POST /fetch-text
@@ -94,7 +115,11 @@ router.post('/', async (req, res) => {
       const raw = message.content[0]?.type === 'text' ? message.content[0].text.trim() : '';
       const { generatedTitle, content } = parseOutput(raw, sourceUrl || 'Threads 貼文');
       console.log(`[fetch-text] total: ${Date.now() - t0}ms | sdk | title: ${generatedTitle}`);
-      return res.json({ title: generatedTitle, content, sourceUrl: sourceUrl || '' });
+      return res.json({
+        title: generatedTitle,
+        content: withOriginalArticleContent(content, truncated),
+        sourceUrl: sourceUrl || '',
+      });
     } catch (err) {
       console.error('[fetch-text] SDK error:', err.message);
       return res.status(500).json({ error: `AI 分析失敗: ${err.message}` });
@@ -113,7 +138,11 @@ router.post('/', async (req, res) => {
     elapsed('CLI done');
     const { generatedTitle, content } = parseOutput(raw, sourceUrl || 'Threads 貼文');
     console.log(`[fetch-text] total: ${Date.now() - t0}ms | ${backend} | title: ${generatedTitle}`);
-    res.json({ title: generatedTitle, content, sourceUrl: sourceUrl || '' });
+    res.json({
+      title: generatedTitle,
+      content: withOriginalArticleContent(content, truncated),
+      sourceUrl: sourceUrl || '',
+    });
   } catch (err) {
     elapsed('CLI failed');
     console.error('[fetch-text] CLI error:', err.message);

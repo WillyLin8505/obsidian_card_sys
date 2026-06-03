@@ -1,24 +1,38 @@
 import { Router } from 'express';
-import { qmdHealthCheck } from '../services/qmd.js';
+import { getClaudePath } from '../services/ai-cli.js';
 
 const router = Router();
+const SEARCH_SERVER_URL = process.env.SEARCH_SERVER_URL || 'http://127.0.0.1:8765';
+
+async function searchHealthCheck() {
+  try {
+    const started = Date.now();
+    const response = await fetch(`${SEARCH_SERVER_URL}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'healthcheck', top_k: 1 }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { ok: false, message: `llama-search ${response.status}: ${text || response.statusText}` };
+    }
+    return { ok: true, message: `llama-search connected (${Date.now() - started}ms)` };
+  } catch (err) {
+    return { ok: false, message: `llama-search unavailable: ${err.message}` };
+  }
+}
 
 router.get('/', async (req, res) => {
-  const qmd = await qmdHealthCheck();
-
-  const claudeApiKey = process.env.CLAUDE_API_KEY;
-  const claudeConfigured = Boolean(claudeApiKey && claudeApiKey.startsWith('sk-ant-'));
+  const search = await searchHealthCheck();
+  const claudePath = getClaudePath();
 
   res.json({
-    ok: qmd.ok && claudeConfigured,
-    qmd: {
-      ok: qmd.ok,
-      version: qmd.version,
-      message: qmd.ok ? `QMD ${qmd.version}` : 'QMD not found — run: pip install qmd',
-    },
+    ok: true,
+    search,
     claude: {
-      ok: claudeConfigured,
-      message: claudeConfigured ? 'API key configured' : 'CLAUDE_API_KEY not set',
+      ok: Boolean(claudePath),
+      message: claudePath ? `Claude CLI: ${claudePath}` : 'Claude CLI not found',
     },
     server: {
       ok: true,

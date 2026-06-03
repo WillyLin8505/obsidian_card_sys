@@ -1,5 +1,5 @@
 import { projectId, publicAnonKey } from '/utils/supabase/info';
-import { Note } from '../types/note';
+import { Note, NoteTemplateConfig } from '../types/note';
 import { AISearchRequest, AISearchResponse, AISearchResult } from '../types/ai-search';
 import { KnowledgeDiscoveryRequest, KnowledgeDiscoveryResult } from '../types/knowledge-discovery';
 import { getLocalServerToken, getObsidianBackendUrl, localHeaders, requireExternalAnalysis } from './appConfig';
@@ -84,10 +84,27 @@ async function fetchUrlWithProgress(
 }
 
 export const localApi = {
-  health: async (): Promise<{ ok: boolean; qmd: { ok: boolean; message: string }; claude: { ok: boolean; message: string } }> => {
+  health: async (): Promise<{ ok: boolean; search: { ok: boolean; message: string }; claude: { ok: boolean; message: string } }> => {
     const response = await fetch(`${getObsidianBackendUrl()}/health`, { headers: localHeaders() });
     if (!response.ok) throw new Error(`Health check failed: ${response.status}`);
     return response.json();
+  },
+
+  getSourceNoteTemplate: async (): Promise<{ template: NoteTemplateConfig; configured: boolean }> => {
+    const response = await fetchLocal(
+      `${getObsidianBackendUrl()}/source-note-template`,
+      undefined,
+      'Failed to load source note template'
+    );
+    return response.json();
+  },
+
+  saveSourceNoteTemplate: async (template: NoteTemplateConfig): Promise<void> => {
+    await fetchLocal(`${getObsidianBackendUrl()}/source-note-template`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template }),
+    }, 'Failed to save source note template');
   },
 
   getNotes: async (vaultPath: string, options?: { summary?: boolean }): Promise<Note[]> => {
@@ -152,7 +169,6 @@ export const localApi = {
   },
 
   expandQuery: async (query: string): Promise<string[]> => {
-    requireExternalAnalysis();
     const response = await fetchLocal(`${getObsidianBackendUrl()}/expand-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -176,7 +192,6 @@ export const localApi = {
     notes: Array<{ title: string; content: string }>,
     models: string[]
   ): Promise<Array<{ model: string; title: string; content: string }>> => {
-    requireExternalAnalysis();
     const response = await fetchLocal(`${getObsidianBackendUrl()}/generate-linked-notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -189,7 +204,6 @@ export const localApi = {
   classifyNoteTypes: async (
     notes: Array<{ id: string; title: string; abstract?: string; content?: string; tags?: string[] }>
   ): Promise<Array<{ id: string; category: string }>> => {
-    requireExternalAnalysis();
     const response = await fetchLocal(`${getObsidianBackendUrl()}/classify-note-types`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -200,7 +214,6 @@ export const localApi = {
   },
 
   enrichNote: async (relativePath: string, vaultPath: string): Promise<void> => {
-    requireExternalAnalysis();
     await fetchLocal(`${getObsidianBackendUrl()}/enrich-note`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -209,7 +222,6 @@ export const localApi = {
   },
 
   enrichVault: async (vaultPath: string): Promise<void> => {
-    requireExternalAnalysis();
     await fetchLocal(`${getObsidianBackendUrl()}/enrich-vault`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -235,11 +247,11 @@ export const localApi = {
     return response.json();
   },
 
-  createNote: async (vaultPath: string, filename: string, content: string): Promise<string> => {
+  createNote: async (vaultPath: string, filename: string, content: string, targetDirectory?: string): Promise<string> => {
     const response = await fetchLocal(`${getObsidianBackendUrl()}/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vaultPath, filename, content }),
+      body: JSON.stringify({ vaultPath, filename, content, targetDirectory }),
     }, 'Failed to create note');
     const { relativePath } = await response.json();
     return relativePath as string;

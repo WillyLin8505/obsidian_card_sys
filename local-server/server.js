@@ -20,6 +20,7 @@ import classifyNoteTypesRouter from './routes/classify-note-types.js';
 import voiceChatRouter from './routes/voice-chat.js';
 import transcribeRouter from './routes/transcribe.js';
 import iosShareRouter from './routes/ios-share.js';
+import sourceNoteTemplateRouter from './routes/source-note-template.js';
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -143,6 +144,7 @@ const rateLimitRules = [
   { prefix: '/search', windowMs: 60_000, max: 60 },
   { prefix: '/notes/asset', windowMs: 60_000, max: 300 },
   { prefix: '/notes', windowMs: 60_000, max: 120 },
+  { prefix: '/source-note-template', windowMs: 60_000, max: 30 },
 ];
 const rateBuckets = new Map();
 
@@ -194,6 +196,7 @@ app.use('/classify-note-types', classifyNoteTypesRouter);
 app.use('/voice-chat', voiceChatRouter);
 app.use('/transcribe', transcribeRouter);
 app.use('/ios-share', iosShareRouter);
+app.use('/source-note-template', sourceNoteTemplateRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });

@@ -6,6 +6,7 @@
   - chunk_size=512（更細粒度，適合 Zettelkasten 短筆記）
   - 段落邊界切割，標題資訊嵌入 chunk 開頭
 """
+import os
 import re
 import shutil
 from pathlib import Path
@@ -15,8 +16,12 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.llms import MockLLM
 
-VAULT_DIR = "/mnt/d/obsidian/personal_willy"
-PERSIST_DIR = "./storage"
+VAULT_DIR = (
+    os.environ.get("OBSIDIAN_VAULT_PATH")
+    or os.environ.get("OBSIDIAN_VAULT_PATHS", "").split(",")[0]
+    or "/mnt/d/obsidian/personal_willy"
+)
+PERSIST_DIR = str(Path(__file__).resolve().parent / "storage")
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 64
 

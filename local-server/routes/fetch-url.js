@@ -14,6 +14,8 @@ const DEFAULT_TEMPLATE_BODY = `## 來源資訊
 - 連結：
 
 ## 重點摘要
+
+## 文章內容
 `;
 
 function buildSystemPrompt(url, templateBody) {
@@ -50,6 +52,9 @@ TITLE: [10字以內的繁體中文標題，反映文章核心主題]
 條列 3–5 個核心觀點，每點一行，格式：**[觀點名稱]**：一句話說明底層原則。
 整個區段總字數不超過 300 字（中文字元計算），不加範例、不加說明段落。
 
+**文章內容**
+保留空白。系統會在分析完成後寫入未經修改的網頁原文。
+
 ## 模板
 
 ${template}`;
@@ -62,9 +67,62 @@ function parseOutput(raw, fallbackTitle) {
   return { generatedTitle, content };
 }
 
+function withOriginalArticleContent(content, originalText) {
+  const original = String(originalText || '').trim();
+  const markdown = String(content || '').trim();
+  const heading = /^##\s+文章內容\s*$/m;
+  const match = heading.exec(markdown);
+
+  if (!match) {
+    return [markdown, '---', '## 文章內容', original].filter(Boolean).join('\n\n');
+  }
+
+  const bodyStart = match.index + match[0].length;
+  const nextHeading = markdown.slice(bodyStart).search(/\n##\s+/);
+  const bodyEnd = nextHeading === -1 ? markdown.length : bodyStart + nextHeading;
+  return `${markdown.slice(0, bodyStart).trimEnd()}\n\n${original}${markdown.slice(bodyEnd)}`.trim();
+}
+
 function isYoutubeHost(hostname) {
   const host = hostname.toLowerCase();
   return host === 'youtu.be' || host.endsWith('.youtube.com') || host === 'youtube.com';
+}
+
+function isThreadsHost(hostname) {
+  const host = hostname.toLowerCase();
+  return host === 'threads.net' || host.endsWith('.threads.net') ||
+    host === 'threads.com' || host.endsWith('.threads.com');
+}
+
+function extractThreadsAuthor(parsedUrl) {
+  const parts = parsedUrl.pathname.split('/').filter(Boolean);
+  const userPart = parts.find(p => p.startsWith('@'));
+  return userPart || '';
+}
+
+function buildThreadsNoteContent(text, author, url) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  // Try to find the title from the first non-header meaningful line
+  const firstMeaningful = lines
+    .map(l => l.replace(/^#+\s*/, '').trim())
+    .find(l => l.length > 5 && !l.startsWith('http'));
+  const title = firstMeaningful
+    ? firstMeaningful.slice(0, 60)
+    : (author ? `${author} 的 Threads 貼文` : 'Threads 貼文');
+
+  const content = [
+    `## 來源資訊`,
+    `- 作者：${author || ''}`,
+    `- 連結：${url}`,
+    ``,
+    `---`,
+    ``,
+    `## 文章內容`,
+    ``,
+    text.trim(),
+  ].join('\n');
+
+  return { title, content };
 }
 
 function extractYoutubeVideoId(parsedUrl) {
@@ -267,16 +325,54 @@ async function summarizeYoutubeWithNotebookLm(parsedUrl, templateBody, elapsed, 
   };
 }
 
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+}
+
+function extractMetaContent(html, key, value) {
+  const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const keyMatch = tag.match(new RegExp(`\\b${key}\\s*=\\s*["']([^"']+)["']`, 'i'));
+    if (keyMatch?.[1].toLowerCase() !== value.toLowerCase()) continue;
+    const contentMatch = tag.match(/\bcontent\s*=\s*["']([\s\S]*?)["']/i);
+    if (contentMatch) return decodeHtmlEntities(contentMatch[1]).trim();
+  }
+  return '';
+}
+
+function extractThreadsPostText(html) {
+  return extractMetaContent(html, 'property', 'og:description') ||
+    extractMetaContent(html, 'name', 'description');
+}
+
+async function fetchThreadsPostText(parsedUrl, elapsed) {
+  const res = await fetch(parsedUrl.toString(), {
+    headers: {
+      'User-Agent': 'CardBoxNoteManagement/1.0',
+      'Accept': 'text/html',
+    },
+    redirect: 'error',
+    signal: AbortSignal.timeout(15000),
+  });
+  elapsed('Threads metadata fetch done');
+  if (!res.ok) throw new Error(`Threads metadata 失敗 (HTTP ${res.status})`);
+  const postText = extractThreadsPostText(await res.text());
+  if (!postText) throw new Error('Threads metadata 沒有主貼文內容');
+  return postText.slice(0, MAX_TEXT_CHARS);
+}
+
 function extractText(html) {
-  return html
+  return decodeHtmlEntities(html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<nav[\s\S]*?<\/nav>/gi, '')
     .replace(/<footer[\s\S]*?<\/footer>/gi, '')
     .replace(/<header[\s\S]*?<\/header>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/<[^>]+>/g, ' '))
     .replace(/\s{2,}/g, ' ')
     .trim()
     .slice(0, MAX_TEXT_CHARS);
@@ -444,6 +540,15 @@ router.post('/', async (req, res) => {
 
   // Fetch the page — try direct first, fall back to Jina Reader on bot-block
   let text;
+  if (isThreadsHost(parsedUrl.hostname)) {
+    try {
+      text = await fetchThreadsPostText(parsedUrl, elapsed);
+    } catch (err) {
+      console.warn(`[fetch-url] Threads metadata fallback: ${err.message}`);
+    }
+  }
+
+  if (!text) {
   try {
     const directRes = await fetch(parsedUrl.toString(), {
       headers: {
@@ -458,7 +563,9 @@ router.post('/', async (req, res) => {
 
     if (directRes.ok) {
       const html = await directRes.text();
-      text = extractText(html);
+      text = isThreadsHost(parsedUrl.hostname)
+        ? extractThreadsPostText(html) || extractText(html)
+        : extractText(html);
       elapsed(`text extracted (${text.length} chars)`);
       // JS-rendered SPAs (e.g. Threads) return 200 but hide content in <script> tags.
       // extractText strips scripts, leaving near-empty output — fall back to Jina Reader.
@@ -493,9 +600,18 @@ router.post('/', async (req, res) => {
       return res.status(502).json({ error: `抓取網頁失敗: ${detail}` });
     }
   }
+  }
 
   if (!text || text.length < 100) {
     return res.status(422).json({ error: '無法從該網頁擷取足夠的文字內容（可能需要登入或是動態頁面）' });
+  }
+
+  // Threads: embed raw post content directly — no AI summarization needed
+  if (isThreadsHost(parsedUrl.hostname)) {
+    const author = extractThreadsAuthor(parsedUrl);
+    const { title, content } = buildThreadsNoteContent(text, author, parsedUrl.toString());
+    console.log(`[fetch-url] total: ${Date.now() - t0}ms | threads-embed | title: ${title}`);
+    return res.json({ title, content, sourceUrl: parsedUrl.toString() });
   }
 
   const systemPrompt = buildSystemPrompt(parsedUrl.toString(), templateBody);
@@ -517,7 +633,7 @@ router.post('/', async (req, res) => {
       const raw = message.content[0]?.type === 'text' ? message.content[0].text.trim() : '';
       const { generatedTitle, content } = parseOutput(raw, parsedUrl.hostname);
       console.log(`[fetch-url] total: ${Date.now() - t0}ms | sdk | title: ${generatedTitle}`);
-      return res.json({ title: generatedTitle, content });
+      return res.json({ title: generatedTitle, content: withOriginalArticleContent(content, text) });
     } catch (err) {
       console.error('[fetch-url] SDK error:', err.message);
       return res.status(500).json({ error: `AI 分析失敗: ${err.message}` });
@@ -538,7 +654,7 @@ router.post('/', async (req, res) => {
     elapsed('CLI done');
     const { generatedTitle, content } = parseOutput(raw, parsedUrl.hostname);
     console.log(`[fetch-url] total: ${Date.now() - t0}ms | ${backend} | title: ${generatedTitle}`);
-    res.json({ title: generatedTitle, content });
+    res.json({ title: generatedTitle, content: withOriginalArticleContent(content, text) });
   } catch (err) {
     elapsed('CLI failed');
     console.error('[fetch-url] CLI error:', err.message);

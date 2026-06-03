@@ -2,7 +2,7 @@ import { lazy, memo, Suspense, useCallback, useState, useEffect, useRef, useMemo
 import { useNavigate, useLocation } from 'react-router';
 import { api, localApi } from '../utils/api';
 import { storage, sortByRecentActivity } from '../utils/storage';
-import { Note } from '../types/note';
+import { CardFontSizes, Note } from '../types/note';
 import { NoteChunk } from '../types/ai-search';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -44,6 +44,7 @@ function invalidateNotesCache(): void {
 // back or clicks the same graph node again.
 let _searchCache = new Map<string, Note[] | NoteChunk[]>();
 let _generatedNotesCache = new Map<string, GeneratedNote[]>();
+const PNOTES_RESULTS_VERSION = '2';
 
 function searchCacheKey(chips: NoteChip[], q: string): string {
   return chips.map(c => c.id).sort().join('\x00') + '|' + q.trim();
@@ -143,6 +144,29 @@ interface GraphConnectionUndo {
   removeTargetLink: boolean;
 }
 
+const removeFrontmatter = (content: string): string =>
+  content.replace(/^---\s*\n[\s\S]*?\n---\s*\n*/, '').trim();
+
+const extractTags = (note: Note): string[] => {
+  const tags = note.tags || [];
+  const frontmatterMatch = note.content.match(/tags:\s*\n([\s\S]*?)(?=\n\w+:|---)/);
+  if (frontmatterMatch) {
+    const fmTags = frontmatterMatch[1]
+      .split('\n')
+      .map(line => line.trim().replace(/^-\s*/, ''))
+      .filter(Boolean);
+    return [...new Set([...tags, ...fmTags])];
+  }
+  return tags;
+};
+
+const getContentPreview = (content: string, maxLength = 200): string => {
+  const cleaned = removeFrontmatter(content);
+  return cleaned.length > maxLength ? cleaned.substring(0, maxLength) + '...' : cleaned;
+};
+
+const delay = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
 interface GeneratedNote {
   model: string;
   title: string;
@@ -223,6 +247,102 @@ const QuickFleetNoteCreator = memo(function QuickFleetNoteCreator({
   );
 });
 
+interface PermanentNotesGridProps {
+  notes: Note[];
+  noteChipLookup: Set<string>;
+  noteChipsLength: number;
+  activeChipId?: string;
+  showTags: boolean;
+  nonTagMetadataKeys: string[];
+  cardSizes: CardFontSizes;
+  linkedNoteIds: Set<string>;
+  linkingNoteId: string | null;
+  onNoteClick: (note: Note, event: React.MouseEvent) => void;
+  onToggleLink: (noteId: string) => void;
+}
+
+const PermanentNotesGrid = memo(function PermanentNotesGrid({
+  notes,
+  noteChipLookup,
+  noteChipsLength,
+  activeChipId,
+  showTags,
+  nonTagMetadataKeys,
+  cardSizes,
+  linkedNoteIds,
+  linkingNoteId,
+  onNoteClick,
+  onToggleLink,
+}: PermanentNotesGridProps) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {notes.map(note => {
+        const isInSearch = noteChipLookup.has(note.id) || noteChipLookup.has(note.title);
+        const noteTags = extractTags(note);
+        const preview = getContentPreview(note.content);
+
+        return (
+          <div key={note.id}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Card
+                  className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden relative ${
+                    isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-white'
+                  }`}
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: '256px' }}
+                  onClick={(event) => onNoteClick(note, event)}
+                >
+                  <h3 className="font-bold mb-2 shrink-0 max-h-[3em] overflow-hidden" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
+                  {showTags && noteTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-2 shrink-0 overflow-hidden max-h-[52px]">
+                      {noteTags.map(tag => (
+                        <Badge key={tag} variant="secondary" className="max-w-full truncate" style={{ fontSize: `${cardSizes.metadata}px` }}>#{tag}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  {nonTagMetadataKeys.map(key => {
+                    const val = parseFrontmatterValue(note.content, key);
+                    if (!val) return null;
+                    return (
+                      <p key={key} className="text-gray-400 font-mono break-words shrink-0 truncate" style={{ fontSize: `${cardSizes.metadata}px` }}>
+                        <span className="text-gray-500">{key}:</span> {val}
+                      </p>
+                    );
+                  })}
+                  <div className="text-gray-600 overflow-hidden flex-1 min-h-0">
+                    <p className="line-clamp-6 leading-normal whitespace-pre-line break-words" style={{ fontSize: `${cardSizes.body}px` }}>{preview}</p>
+                  </div>
+                  {noteChipsLength === 1 && activeChipId !== note.id && (
+                    <button
+                      className={`absolute bottom-2 right-2 p-1.5 rounded-full transition-colors ${
+                        linkedNoteIds.has(note.id)
+                          ? 'bg-green-100 text-green-600 hover:bg-red-100 hover:text-red-500'
+                          : 'bg-gray-100 text-gray-400 hover:bg-blue-100 hover:text-blue-600'
+                      }`}
+                      onClick={e => { e.stopPropagation(); onToggleLink(note.id); }}
+                      title={linkedNoteIds.has(note.id) ? '取消雙向連結' : '建立雙向連結'}
+                    >
+                      {linkingNoteId === note.id
+                        ? <Loader2 className="size-5 animate-spin" />
+                        : linkedNoteIds.has(note.id)
+                          ? <Link2Off className="size-5" />
+                          : <Link2 className="size-5" />
+                      }
+                    </button>
+                  )}
+                </Card>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>點擊加入搜尋列・Ctrl+Click 開啟編輯</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
 export function PermanentNotes() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -296,11 +416,27 @@ export function PermanentNotes() {
     }
     try {
       const saved = sessionStorage.getItem('pnotes_results');
-      if (saved) return JSON.parse(saved);
+      const version = sessionStorage.getItem('pnotes_results_version');
+      if (saved && version === PNOTES_RESULTS_VERSION) return JSON.parse(saved);
+      if (saved) sessionStorage.removeItem('pnotes_results');
     } catch {}
     return null;
   });
   const [isSearching, setIsSearching] = useState(false);
+  const noteChipLookup = useMemo(() => {
+    const lookup = new Set<string>();
+    noteChips.forEach(chip => {
+      lookup.add(chip.id);
+      lookup.add(chip.title);
+    });
+    return lookup;
+  }, [noteChips]);
+  const metadataKeys = config.displayMetadataKeys;
+  const showTags = metadataKeys.includes('tags');
+  const nonTagMetadataKeys = useMemo(
+    () => metadataKeys.filter(key => key !== 'tags'),
+    [metadataKeys],
+  );
 
   // Persist search state across page navigation
   useEffect(() => {
@@ -317,8 +453,13 @@ export function PermanentNotes() {
 
   useEffect(() => {
     try {
-      if (searchResults !== null) sessionStorage.setItem('pnotes_results', JSON.stringify(searchResults));
-      else sessionStorage.removeItem('pnotes_results');
+      if (searchResults !== null) {
+        sessionStorage.setItem('pnotes_results', JSON.stringify(searchResults));
+        sessionStorage.setItem('pnotes_results_version', PNOTES_RESULTS_VERSION);
+      } else {
+        sessionStorage.removeItem('pnotes_results');
+        sessionStorage.removeItem('pnotes_results_version');
+      }
     } catch {}
   }, [searchResults]);
 
@@ -685,37 +826,18 @@ export function PermanentNotes() {
 
   // ─────────────────────────────────────────────────────────────
 
-  const removeFrontmatter = (content: string): string =>
-    content.replace(/^---\s*\n[\s\S]*?\n---\s*\n*/, '').trim();
-
-  const extractTags = (note: Note): string[] => {
-    const tags = note.tags || [];
-    const frontmatterMatch = note.content.match(/tags:\s*\n([\s\S]*?)(?=\n\w+:|---)/);
-    if (frontmatterMatch) {
-      const fmTags = frontmatterMatch[1]
-        .split('\n')
-        .map(line => line.trim().replace(/^-\s*/, ''))
-        .filter(Boolean);
-      return [...new Set([...tags, ...fmTags])];
-    }
-    return tags;
-  };
-
-  const getContentPreview = (content: string, maxLength = 200): string => {
-    const cleaned = removeFrontmatter(content);
-    return cleaned.length > maxLength ? cleaned.substring(0, maxLength) + '...' : cleaned;
-  };
-
   // Extract title + abstract + connect from YAML frontmatter,
   // falling back to markdown section headings if frontmatter fields are absent.
   const extractSearchContent = (note: Note): string => {
-    if (isSummaryNote(note) && note.searchText) {
-      return note.searchText;
-    }
     const parts: string[] = [note.title];
 
+    const fmAbstract = note.frontmatter?.abstract?.trim();
+    const fmConnect = note.frontmatter?.connect?.trim();
+    if (fmAbstract) parts.push(fmAbstract);
+    if (fmConnect) parts.push(fmConnect);
+
     // ── 1. Parse YAML frontmatter ──────────────────────────────
-    const fmMatch = note.content.match(/^---\s*\n([\s\S]*?)\n---/);
+    const fmMatch = parts.length === 1 ? note.content.match(/^---\s*\n([\s\S]*?)\n---/) : null;
     if (fmMatch) {
       const fm = fmMatch[1];
 
@@ -880,6 +1002,44 @@ export function PermanentNotes() {
     }
   };
 
+  const buildLocalSearchFallback = (queryText: string, chips: NoteChip[]): NoteChunk[] => {
+    const chipIds = makeNoteIdentitySet(chips.map(c => c.id));
+    const terms = [...new Set(
+      queryText
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_-]+/u)
+        .map(term => term.trim())
+        .filter(term => term.length >= 2)
+    )].slice(0, 40);
+
+    const scored = allNotes
+      .filter(note => {
+        const lowerId = note.id.toLowerCase();
+        if (lowerId.startsWith('.trash/') || lowerId.includes('/.trash/')) return false;
+        if (lowerId.includes('template') || lowerId.includes('模板')) return false;
+        return true;
+      })
+      .map(note => {
+        const title = note.title.toLowerCase();
+        const haystack = `${title} ${extractSearchContent(note)} ${note.tags.join(' ')}`.toLowerCase();
+        let score = noteIdentityParts(note.id).some(part => chipIds.has(part)) ? 100 : 0;
+        for (const term of terms) {
+          if (title.includes(term)) score += 8;
+          if (haystack.includes(term)) score += 2;
+        }
+        return { note, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15);
+
+    return scored.map(({ note, score }) => ({
+      notePath: note.id,
+      content: note.content,
+      similarity: Math.min(0.99, Math.max(0.05, score / 100)),
+    }));
+  };
+
   // Search each chip separately in parallel and merge results.
   // Combining all chip content into one long query causes qmd to return nothing.
   const runSearch = async (chips: NoteChip[], manualQ: string) => {
@@ -908,21 +1068,46 @@ export function PermanentNotes() {
       if (isObsidianMode) {
         const isTemplatePath = (p: string) => {
           const lower = p.toLowerCase();
-          return lower.includes('template') || lower.includes('模板');
+          return lower.includes('template') || lower.includes('模板') || lower.startsWith('.trash/') || lower.includes('/.trash/');
         };
         const seen = new Set<string>();
         const allChunks: NoteChunk[] = [];
-        await Promise.all(queries.map(async (q) => {
+        const searchFailures: string[] = [];
+
+        const searchWithRetry = async (q: string): Promise<NoteChunk[]> => {
+          let lastError: any;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              const result = await localApi.search(q);
+              return result.chunks || [];
+            } catch (err: any) {
+              lastError = err;
+              if (attempt === 0) await delay(600);
+            }
+          }
+          throw lastError;
+        };
+
+        for (const q of queries) {
           try {
-            const result = await localApi.search(q);
-            for (const chunk of result.chunks) {
+            const chunks = await searchWithRetry(q);
+            for (const chunk of chunks) {
               if (!seen.has(chunk.notePath) && !isTemplatePath(chunk.notePath)) {
                 seen.add(chunk.notePath);
                 allChunks.push(chunk);
               }
             }
-          } catch { /* skip failed sub-query */ }
-        }));
+          } catch (err: any) {
+            console.warn('[PermanentNotes] semantic search failed:', err.message);
+            searchFailures.push(err.message || 'semantic search failed');
+          }
+        }
+        if (searchFailures.length === queries.length) {
+          const fallbackChunks = buildLocalSearchFallback(queries.join(' '), chips);
+          if (fallbackChunks.length === 0) throw new Error(searchFailures[0] || '語意搜尋失敗');
+          allChunks.push(...fallbackChunks);
+          toast.info(`語意搜尋暫時不可用，已改用本地相關筆記排序（${searchFailures[0]}）`);
+        }
         const chipIds = makeNoteIdentitySet(chips.map(c => c.id));
         const sorted = allChunks.sort((a, b) => {
           const aIsSelf = noteIdentityParts(a.notePath).some(part => chipIds.has(part));
@@ -1067,6 +1252,7 @@ export function PermanentNotes() {
       sessionStorage.removeItem('pnotes_chips');
       sessionStorage.removeItem('pnotes_query');
       sessionStorage.removeItem('pnotes_results');
+      sessionStorage.removeItem('pnotes_results_version');
       Object.keys(sessionStorage)
         .filter(key => key.startsWith('pnotes_nav_consumed_'))
         .forEach(key => sessionStorage.removeItem(key));
@@ -1156,18 +1342,49 @@ export function PermanentNotes() {
       return;
     }
     setIsEnriching(true);
+    const activeChip = noteChips[0];
+    let nextChips = noteChips;
     try {
-      await localApi.enrichNote(noteChips[0].id, config.notePath);
+      let targetId = activeChip.id;
+      try {
+        const targetNote = await ensureFullNote(activeChip.id);
+        targetId = targetNote?.id ?? activeChip.id;
+      } catch (loadErr: any) {
+        console.warn('[PermanentNotes] enrich target load failed, using chip id:', loadErr.message);
+      }
+
+      await localApi.enrichNote(targetId, config.notePath);
       invalidateResultsCaches();
-      // Also kick off vault-wide enrichment for all other unenriched notes in the background.
-      // enrich_notes.py --vault skips notes that already have abstract+connect filled in,
-      // so only newly added notes (since the last enrich run) will be processed.
-      localApi.enrichVault(config.notePath).catch(err => {
-        console.warn('[enrich-vault] background batch failed:', err.message);
-      });
-      toast.success(`「${noteChips[0].title}」AI 填充完成，其餘新筆記正在背景批量填充中...`);
+      toast.success(`「${activeChip.title}」AI 填充完成`);
+
+      try {
+        const refreshed = sortByRecentActivity(await storage.reloadNotes({ summary: isObsidianMode }));
+        setCachedNotes(refreshed);
+        setAllNotes(refreshed);
+
+        const refreshedTarget = refreshed.find(note => isSameNoteId(note.id, targetId));
+        nextChips = noteChips.map((chip, index) => {
+          if (index !== 0 || !refreshedTarget) return chip;
+          return {
+            id: refreshedTarget.id,
+            title: refreshedTarget.title,
+            searchContent: extractSearchContent(refreshedTarget),
+          };
+        });
+        setNoteChips(nextChips);
+        setSearchResults(null);
+        autoSearchedRef.current = true;
+      } catch (reloadErr: any) {
+        toast.error(`筆記已填充，但重新載入失敗: ${reloadErr.message}`);
+      }
+
+      try {
+        await runSearch(nextChips, '');
+      } catch (searchErr: any) {
+        toast.error(`AI 搜尋失敗: ${searchErr.message}`);
+      }
     } catch (err: any) {
-      toast.error(`填充失敗: ${err.message}`);
+      toast.error(`Claude CLI 填充失敗: ${err.message}`);
     } finally {
       setIsEnriching(false);
     }
@@ -1719,7 +1936,7 @@ export function PermanentNotes() {
       {(searchResults !== null || isSearching) && (
         <div className="mb-8">
           <h2 className="text-base font-semibold mb-3 text-gray-700 flex items-center gap-2">
-            {displayResults !== null ? `相關筆記（${displayResults.length} 則）` : '相關筆記'}
+            {displayResults !== null ? `AI 搜尋相關筆記（${displayResults.length} 則）` : 'AI 搜尋相關筆記'}
             {isSearching && <Loader2 className="size-3.5 animate-spin text-blue-400" />}
           </h2>
           {displayResults !== null && displayResults.length > 0 ? (
@@ -1734,7 +1951,7 @@ export function PermanentNotes() {
                     ? getContentPreview(fullNote.content)
                     : chunk.content.replace(/^@@[^@]*@@[^\n]*\n?/, '').trim();
 
-                  const isInSearch = noteChips.some(c => c.id === noteId);
+                  const isInSearch = noteChipLookup.has(noteId) || noteChipLookup.has(fileName);
 
                   const handleChunkClick = (event: React.MouseEvent) => {
                     if (event.ctrlKey || event.metaKey) {
@@ -1757,6 +1974,7 @@ export function PermanentNotes() {
                       <TooltipTrigger asChild>
                         <Card
                           className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden relative ${isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-white'}`}
+                          style={{ contentVisibility: 'auto', containIntrinsicSize: '256px' }}
                           onClick={handleChunkClick}
                         >
                           <div className="flex items-start justify-between mb-2 shrink-0">
@@ -1772,7 +1990,7 @@ export function PermanentNotes() {
                               ))}
                             </div>
                           )}
-                          {fullNote && config.displayMetadataKeys.filter(k => k !== 'tags').map(key => {
+                          {fullNote && nonTagMetadataKeys.map(key => {
                             const val = parseFrontmatterValue(fullNote.content, key);
                             if (!val) return null;
                             return (
@@ -1812,7 +2030,7 @@ export function PermanentNotes() {
                 })
               ) : (
                 (displayResults as Note[]).map(note => {
-                  const isInSearch = noteChips.some(c => c.id === note.id || c.title === note.title);
+                  const isInSearch = noteChipLookup.has(note.id) || noteChipLookup.has(note.title);
                   const noteTags = extractTags(note);
                   const preview = getContentPreview(note.content);
                   return (
@@ -1820,6 +2038,7 @@ export function PermanentNotes() {
                       <TooltipTrigger asChild>
                         <Card
                           className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden ${isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-blue-50 border-blue-200'}`}
+                          style={{ contentVisibility: 'auto', containIntrinsicSize: '256px' }}
                           onClick={e => handleNoteClick(note, e)}
                         >
                           <h3 className="font-bold mb-2 shrink-0 max-h-[3em] overflow-hidden" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
@@ -1830,7 +2049,7 @@ export function PermanentNotes() {
                               ))}
                             </div>
                           )}
-                          {config.displayMetadataKeys.filter(k => k !== 'tags').map(key => {
+                          {nonTagMetadataKeys.map(key => {
                             const val = parseFrontmatterValue(note.content, key);
                             if (!val) return null;
                             return (
@@ -1861,70 +2080,24 @@ export function PermanentNotes() {
 
       {/* Notes Grid */}
       {allNotes.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {allNotes.map(note => {
-            const isInSearch = noteChips.some(c => c.id === note.id || c.title === note.title);
-            const noteTags = extractTags(note);
-            const preview = getContentPreview(note.content);
-
-            return (
-              <div key={note.id}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                <Card
-                  className={`p-4 cursor-pointer hover:shadow-lg transition-all h-64 flex flex-col overflow-hidden relative ${
-                    isInSearch ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-white'
-                  }`}
-                  onClick={(event) => handleNoteClick(note, event)}
-                >
-                  <h3 className="font-bold mb-2 shrink-0 max-h-[3em] overflow-hidden" style={{ fontSize: `${cardSizes.title}px` }}>{note.title}</h3>
-                  {config.displayMetadataKeys.includes('tags') && noteTags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-2 shrink-0 overflow-hidden max-h-[52px]">
-                      {noteTags.map(tag => (
-                        <Badge key={tag} variant="secondary" className="max-w-full truncate" style={{ fontSize: `${cardSizes.metadata}px` }}>#{tag}</Badge>
-                      ))}
-                    </div>
-                  )}
-                  {config.displayMetadataKeys.filter(k => k !== 'tags').map(key => {
-                    const val = parseFrontmatterValue(note.content, key);
-                    if (!val) return null;
-                    return (
-                      <p key={key} className="text-gray-400 font-mono break-words shrink-0 truncate" style={{ fontSize: `${cardSizes.metadata}px` }}>
-                        <span className="text-gray-500">{key}:</span> {val}
-                      </p>
-                    );
-                  })}
-                  <div className="text-gray-600 overflow-hidden flex-1 min-h-0">
-                    <p className="line-clamp-6 leading-normal whitespace-pre-line break-words" style={{ fontSize: `${cardSizes.body}px` }}>{preview}</p>
-                  </div>
-                  {noteChips.length === 1 && noteChips[0].id !== note.id && (
-                    <button
-                      className={`absolute bottom-2 right-2 p-1.5 rounded-full transition-colors ${
-                        linkedNoteIds.has(note.id)
-                          ? 'bg-green-100 text-green-600 hover:bg-red-100 hover:text-red-500'
-                          : 'bg-gray-100 text-gray-400 hover:bg-blue-100 hover:text-blue-600'
-                      }`}
-                      onClick={e => { e.stopPropagation(); handleToggleLink(note.id); }}
-                      title={linkedNoteIds.has(note.id) ? '取消雙向連結' : '建立雙向連結'}
-                    >
-                      {linkingNoteId === note.id
-                        ? <Loader2 className="size-5 animate-spin" />
-                        : linkedNoteIds.has(note.id)
-                          ? <Link2Off className="size-5" />
-                          : <Link2 className="size-5" />
-                      }
-                    </button>
-                  )}
-                </Card>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    <p>點擊加入搜尋列・Ctrl+Click 開啟編輯</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            );
-          })}
-        </div>
+        <section className="mt-8">
+          <h2 className="text-base font-semibold mb-3 text-gray-700">
+            全部筆記（{allNotes.length} 則）
+          </h2>
+          <PermanentNotesGrid
+            notes={allNotes}
+            noteChipLookup={noteChipLookup}
+            noteChipsLength={noteChips.length}
+            activeChipId={noteChips[0]?.id}
+            showTags={showTags}
+            nonTagMetadataKeys={nonTagMetadataKeys}
+            cardSizes={cardSizes}
+            linkedNoteIds={linkedNoteIds}
+            linkingNoteId={linkingNoteId}
+            onNoteClick={handleNoteClick}
+            onToggleLink={handleToggleLink}
+          />
+        </section>
       ) : (
         <div className="text-center py-12 text-gray-500">
           <p>尚無筆記</p>

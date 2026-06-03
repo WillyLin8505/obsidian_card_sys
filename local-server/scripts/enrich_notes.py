@@ -25,6 +25,7 @@ import sys
 import json
 import time
 from pathlib import Path
+from collections import Counter
 
 
 FM_RE = re.compile(r'^---\s*\n([\s\S]*?)\n---\s*\n?', re.MULTILINE)
@@ -86,6 +87,55 @@ def _parse_enrich_response(raw: str) -> tuple[str, list[str]]:
     abstract = str(data.get('abstract', '')).strip()
     connect = [str(c).strip() for c in data.get('connect', [])][:5]
     return abstract, connect
+
+
+def heuristic_enrich_note(title: str, body: str) -> tuple[str, list[str]]:
+    """Local fallback used when external AI backends are unavailable."""
+    text = re.sub(r'!\[[^\]]*\]\([^)]+\)', ' ', body)
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    text = re.sub(r'\[\[([^\]|#\n]+)(?:\|[^\]]+)?\]\]', r'\1', text)
+    text = re.sub(r'[#>*_`~\-|]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    sentences = [
+        s.strip()
+        for s in re.split(r'(?<=[。！？.!?])\s+|\n+', body)
+        if len(s.strip()) >= 12 and not s.strip().startswith(('---', '```'))
+    ]
+    abstract_source = sentences[0] if sentences else text
+    abstract = re.sub(r'\s+', ' ', abstract_source).strip()[:120]
+    if not abstract:
+        abstract = f'{title} 的核心內容與相關概念整理。'
+
+    candidates: list[str] = []
+    for match in re.finditer(r'\[\[([^\]|#\n]+)(?:\|[^\]]+)?\]\]', body):
+        candidates.append(match.group(1).strip())
+    for match in re.finditer(r'^#{1,4}\s+(.+)$', body, re.MULTILINE):
+        candidates.append(match.group(1).strip())
+    for token in re.findall(r'[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9_\-]{1,11}', text):
+        if len(token) >= 2 and not token.isdigit():
+            candidates.append(token)
+
+    stopwords = {
+        'Note', 'Question', 'Answer', 'Summary', 'Reference', 'Metadata',
+        'create', 'date', 'aliases', 'tags', 'abstract', 'connect',
+        '這個', '一個', '以及', '可以', '自己', '我們', '因為', '所以', '但是',
+        '如果', '沒有', '就是', '不是', '透過', '需要', '相關', '筆記',
+    }
+    counter = Counter(
+        c.strip(' ：:，,。.!?[]()（）')
+        for c in candidates
+        if c.strip() and c.strip() not in stopwords
+    )
+    connect = [word for word, _ in counter.most_common(5)]
+    if len(connect) < 5:
+        for fallback in [title, '核心概念', '相關筆記', '行動整理', '問題意識']:
+            if fallback not in connect:
+                connect.append(fallback)
+            if len(connect) >= 5:
+                break
+
+    return abstract, connect[:5]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -222,6 +272,9 @@ def _run_command_with_retries(cmd: list[str], backend: str) -> str:
         )
         if result.returncode == 0:
             return result.stdout.strip()
+        combined = f"{result.stderr}\n{result.stdout}".lower()
+        if 'rate limit' not in combined and 'too many requests' not in combined:
+            raise RuntimeError(f"{backend} CLI failed: {(result.stderr or result.stdout).strip()}")
     raise RuntimeError(f"{backend} CLI failed after retries: {result.stderr.strip()}")
 
 
@@ -229,6 +282,8 @@ def _run_command_with_retries(cmd: list[str], backend: str) -> str:
 
 def resolve_backend(requested: str) -> str:
     """Return 'claude', 'codex', or 'cursor' based on what's requested and available."""
+    if requested == 'heuristic':
+        return 'heuristic'
     if requested == 'claude':
         if not get_claude_path():
             raise RuntimeError("--backend claude requested but claude CLI not found")
@@ -241,31 +296,43 @@ def resolve_backend(requested: str) -> str:
         if not get_cursor_agent_path():
             raise RuntimeError("--backend cursor requested but cursor agent CLI not found")
         return 'cursor'
-    # auto: prefer claude CLI, fall back to Codex CLI, then cursor agent
-    if get_claude_path():
-        return 'claude'
-    if get_codex_path():
-        return 'codex'
-    if get_cursor_agent_path():
-        return 'cursor'
-    raise RuntimeError(
-        "No backend available. Install claude CLI, codex CLI, or cursor agent CLI."
+    # auto: prefer explicitly configured external CLIs, otherwise use local fallback.
+    # Auto-detected CLIs can hang waiting on unavailable auth/network in background routes.
+    claude_api_configured = bool(
+        os.environ.get('ANTHROPIC_API_KEY') or
+        os.environ.get('CLAUDE_API_KEY') or
+        os.environ.get('CLAUDE_BIN')
     )
+    if claude_api_configured and get_claude_path():
+        return 'claude'
+    if os.environ.get('CODEX_BIN') and get_codex_path():
+        return 'codex'
+    if os.environ.get('CURSOR_AGENT_BIN') and get_cursor_agent_path():
+        return 'cursor'
+    return 'heuristic'
 
 
 def enrich_note(title: str, body: str, backend: str = 'auto') -> tuple[str, list[str]]:
     """Generate abstract + connect keywords using the chosen backend."""
-    resolved = resolve_backend(backend)
-    prompt = ENRICH_PROMPT_TEMPLATE.format(title=title, body=body[:3000])
+    try:
+        resolved = resolve_backend(backend)
+        if resolved == 'heuristic':
+            return heuristic_enrich_note(title, body)
+        prompt = ENRICH_PROMPT_TEMPLATE.format(title=title, body=body[:3000])
 
-    if resolved == 'claude':
-        raw = _run_cli(get_claude_path(), prompt, 'claude')
-    elif resolved == 'codex':
-        raw = _run_cli(get_codex_path(), prompt, 'codex')
-    else:
-        raw = _run_cli(get_cursor_agent_path(), prompt, 'cursor')
+        if resolved == 'claude':
+            raw = _run_cli(get_claude_path(), prompt, 'claude')
+        elif resolved == 'codex':
+            raw = _run_cli(get_codex_path(), prompt, 'codex')
+        else:
+            raw = _run_cli(get_cursor_agent_path(), prompt, 'cursor')
 
-    return _parse_enrich_response(raw)
+        return _parse_enrich_response(raw)
+    except Exception as exc:
+        if os.environ.get('AI_ENRICH_DISABLE_HEURISTIC_FALLBACK') == '1':
+            raise
+        print(f"[warn] AI backend unavailable, using local heuristic fallback: {exc}", file=sys.stderr)
+        return heuristic_enrich_note(title, body)
 
 
 def process_file(path: Path, dry_run: bool, force: bool, backend: str = 'auto') -> str:
@@ -339,8 +406,8 @@ def main():
                         help='Overwrite existing abstract/connect')
     parser.add_argument('--limit', type=int, default=0,
                         help='Process at most N files (0 = all)')
-    parser.add_argument('--backend', choices=['auto', 'claude', 'codex', 'cursor'], default='auto',
-                        help='AI backend: auto (default, prefers claude then codex), claude (Claude Code CLI), codex (Codex CLI), cursor (Cursor agent CLI)')
+    parser.add_argument('--backend', choices=['auto', 'claude', 'codex', 'cursor', 'heuristic'], default='auto',
+                        help='AI backend: auto, claude, codex, cursor, or heuristic local fallback')
     args = parser.parse_args()
 
     if not args.vault and not args.file:
@@ -395,6 +462,8 @@ def main():
             print(f"[{i}/{total}] ✗ {rel}  ({result})", file=sys.stderr)
 
     print(f"\nDone. enriched={enriched}  pre-skipped={pre_skipped}  errors={errors}")
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

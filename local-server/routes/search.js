@@ -4,6 +4,11 @@ const router = Router();
 
 const SEARCH_SERVER_URL = process.env.SEARCH_SERVER_URL || 'http://127.0.0.1:8765';
 
+function isHiddenOrTrashPath(notePath = '') {
+  const lower = String(notePath).replace(/\\/g, '/').toLowerCase();
+  return lower.startsWith('.trash/') || lower.includes('/.trash/');
+}
+
 async function llamaSearch(question, topK = 30) {
   const res = await fetch(`${SEARCH_SERVER_URL}/search`, {
     method: 'POST',
@@ -31,6 +36,9 @@ router.post('/', async (req, res) => {
 
   try {
     const data = await llamaSearch(question.trim());
+    if (Array.isArray(data.chunks)) {
+      data.chunks = data.chunks.filter(chunk => !isHiddenOrTrashPath(chunk.notePath));
+    }
 
     data.searchTime = Date.now() - startTime;
 

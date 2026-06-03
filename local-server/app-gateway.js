@@ -95,8 +95,11 @@ async function proxyFetch(req, res, targetBase, stripPrefix = '') {
   delete headers['content-length'];
   delete headers.cookie;
   delete headers.authorization;
-  if (targetBase === LOCAL_API_BASE && LOCAL_SERVER_TOKEN) {
-    headers['x-local-server-token'] = LOCAL_SERVER_TOKEN;
+  if (targetBase === LOCAL_API_BASE) {
+    // Server-to-server call — strip Origin so Express CORS middleware doesn't
+    // reject the Tailscale/Cloudflare origin that the browser included.
+    delete headers.origin;
+    if (LOCAL_SERVER_TOKEN) headers['x-local-server-token'] = LOCAL_SERVER_TOKEN;
   }
 
   const response = await fetch(targetUrl, {

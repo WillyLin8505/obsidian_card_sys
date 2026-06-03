@@ -31,7 +31,7 @@ export function Config() {
   const [isMigrating, setIsMigrating] = useState(false);
   const [dbStatus, setDbStatus] = useState<{ success: boolean; message: string; hint?: string } | null>(null);
   const [isCheckingDb, setIsCheckingDb] = useState(false);
-  const [localStatus, setLocalStatus] = useState<{ ok: boolean; qmd: { ok: boolean; message: string }; claude: { ok: boolean; message: string } } | null>(null);
+  const [localStatus, setLocalStatus] = useState<{ ok: boolean; search: { ok: boolean; message: string }; claude: { ok: boolean; message: string } } | null>(null);
   const [isCheckingLocal, setIsCheckingLocal] = useState(false);
   const [displayMetadataKeys, setDisplayMetadataKeys] = useState<string[]>(config.displayMetadataKeys || []);
   const [availableMetadataKeys, setAvailableMetadataKeys] = useState<string[]>([]);
@@ -69,6 +69,18 @@ export function Config() {
     scanNotes();
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    localApi.getSourceNoteTemplate()
+      .then(({ template, configured }) => {
+        if (active && configured) setSourceNoteTemplate(template);
+      })
+      .catch(() => {
+        // Keep browser-local settings available when the local server is offline.
+      });
+    return () => { active = false; };
+  }, []);
+
   const checkDatabaseStatus = async () => {
     setIsCheckingDb(true);
     try {
@@ -85,7 +97,7 @@ export function Config() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const newConfig: ConfigType = {
       notePath,
       sourceNoteSavePath: sourceNoteSavePath.trim() || undefined,
@@ -105,7 +117,13 @@ export function Config() {
 
     storage.saveConfig(newConfig);
     setConfig(newConfig);
-    toast.success('設定已儲存');
+    try {
+      await localApi.saveSourceNoteTemplate(sourceNoteTemplate);
+      toast.success('設定已儲存');
+    } catch (err) {
+      console.warn('Source note template sync failed:', err);
+      toast.warning('設定已儲存，但文獻筆記模板尚未同步到本地服務');
+    }
   };
 
   const checkLocalServer = async () => {
@@ -117,7 +135,7 @@ export function Config() {
     } catch (err: any) {
       setLocalStatus({
         ok: false,
-        qmd: { ok: false, message: '無法連接到本地伺服器' },
+        search: { ok: false, message: '無法連接到本地伺服器' },
         claude: { ok: false, message: err.message || '連線失敗' },
       });
     } finally {
@@ -199,7 +217,7 @@ export function Config() {
           <div className="flex flex-col gap-3">
             {([
               { value: 'supabase', label: 'Supabase（雲端）', desc: '使用遠端 Supabase 資料庫' },
-              { value: 'obsidian', label: 'Obsidian 本機 Vault', desc: '透過本地後端伺服器讀取 QMD 語意搜尋' },
+              { value: 'obsidian', label: 'Obsidian 本機 Vault', desc: '透過本地後端伺服器讀取，使用 llama-search 語意搜尋' },
               { value: 'local', label: 'Local Storage（瀏覽器）', desc: '僅存在瀏覽器 localStorage，不同裝置無法共用' },
             ] as { value: DataSource; label: string; desc: string }[]).map(({ value, label, desc }) => (
               <label
@@ -285,7 +303,7 @@ export function Config() {
               />
               <p className="text-sm text-gray-500 mt-2">
                 {dataSource === 'obsidian'
-                  ? <span>你的 Obsidian Vault 所在位置。設定後需在 WSL 執行：<br /><code className="bg-gray-100 px-1 rounded">qmd collection add {notePath || '<vault路徑>'} --name obsidian && qmd embed</code></span>
+                  ? <span>你的 Obsidian Vault 所在位置。語意搜尋由 local-server 自動連接 llama-search。</span>
                   : '設定您的 Markdown 檔案儲存位置'
                 }
               </p>
@@ -302,7 +320,7 @@ export function Config() {
                 placeholder="例如: D:\obsidian\Willy_2026\Sources\others"
               />
               <p className="text-sm text-gray-500 mt-2">
-                抓取網址建立的文獻筆記，會同步儲存為 .md 檔案到此路徑。需先啟動本地後端伺服器。留空則不儲存到本機。
+                抓取網址建立的文獻筆記，會同步儲存為 .md 檔案到此路徑。Obsidian 模式可填 Vault 內的絕對路徑或相對子資料夾；留空則存到 Vault 根目錄。
               </p>
             </div>
           </div>
@@ -617,7 +635,7 @@ export function Config() {
             <h2>本地 Obsidian 連線</h2>
           </div>
           <p className="text-sm text-gray-600 mb-4">
-            設定本地後端伺服器的 URL（透過 Tailscale 可達），用於 QMD 語意搜尋與文獻筆記 AI 分析。
+            設定本地後端伺服器的 URL（透過 Tailscale 可達），用於 llama-search 語意搜尋與文獻筆記 AI 分析。
             <br />
             啟動方式：進入 <code className="bg-gray-100 px-1 rounded">local-server/</code> 目錄，執行 <code className="bg-gray-100 px-1 rounded">node server.js</code>
           </p>
@@ -684,16 +702,16 @@ export function Config() {
                 </div>
                 <div className="text-sm space-y-1 ml-6">
                   <div className="flex items-center gap-2">
-                    {localStatus.qmd.ok
+                    {localStatus.search.ok
                       ? <CheckCircle className="size-3 text-green-600" />
                       : <XCircle className="size-3 text-red-600" />}
-                    <span className="text-gray-700">QMD: {localStatus.qmd.message}</span>
+                    <span className="text-gray-700">語意搜尋: {localStatus.search.message}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     {localStatus.claude.ok
                       ? <CheckCircle className="size-3 text-green-600" />
                       : <XCircle className="size-3 text-red-600" />}
-                    <span className="text-gray-700">Claude API: {localStatus.claude.message}</span>
+                    <span className="text-gray-700">Claude CLI: {localStatus.claude.message}</span>
                   </div>
                 </div>
               </div>

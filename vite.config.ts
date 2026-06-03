@@ -18,12 +18,21 @@ export default defineConfig({
   },
 
   server: {
+    host: '0.0.0.0',
+    port: 5175,
     allowedHosts: ['all', 'desktop-6o0unv6-2.taileefcfe.ts.net'],
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            // Server-to-server call — strip Origin so Express CORS middleware
+            // doesn't reject the Tailscale origin that the browser included.
+            proxyReq.removeHeader('origin');
+          });
+        },
       },
     },
   },

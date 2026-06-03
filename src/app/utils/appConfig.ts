@@ -40,7 +40,7 @@ export const DEFAULT_CONFIG: Config = {
       { key: 'aliases', defaultValue: '' },
       { key: 'tags', defaultValue: '3card/筆記法/卡片盒筆記法/文獻筆記' },
     ],
-    bodyTemplate: '# 文獻筆記\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n',
+    bodyTemplate: '# 文獻筆記\n\n## 來源資訊\n- 作者：\n- 標題：\n- 連結：\n\n## 重點摘要\n\n## 文章內容\n\n',
   },
   fleetNoteTags: [],
   sourceNoteTags: [],
@@ -119,14 +119,31 @@ export function getObsidianBackendUrl(): string {
     const isBrowser = typeof window !== 'undefined';
     const host = isBrowser ? window.location.hostname : '';
     const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '';
+    const remoteApiUrl = isBrowser && !isLocalHost ? `${window.location.origin}/api` : '';
+    let configuredHost = '';
+    if (configuredUrl) {
+      try {
+        configuredHost = new URL(configuredUrl).hostname;
+      } catch {
+        if (remoteApiUrl) return remoteApiUrl;
+      }
+    }
+    const configuredIsLocal = configuredHost === 'localhost' || configuredHost === '127.0.0.1' || configuredHost === '0.0.0.0';
+    if (remoteApiUrl && (!configuredUrl || configuredIsLocal)) {
+      return remoteApiUrl;
+    }
     if (configuredUrl && (configuredUrl !== DEFAULT_CONFIG.obsidianBackendUrl || isLocalHost)) {
       return configuredUrl.replace(/\/$/, '');
     }
-    if (isBrowser && !isLocalHost) {
-      return `${window.location.origin}/api`;
-    }
+    if (remoteApiUrl) return remoteApiUrl;
     return (DEFAULT_CONFIG.obsidianBackendUrl || 'http://localhost:3001').replace(/\/$/, '');
   } catch {
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host && host !== 'localhost' && host !== '127.0.0.1') {
+        return `${window.location.origin}/api`;
+      }
+    }
     return 'http://localhost:3001';
   }
 }

@@ -9,6 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS_DIR = join(__dirname, '..', 'scripts');
 const LLAMA_DIR = join(__dirname, '..', '..', 'llama-search');
 const VENV_PYTHON = join(LLAMA_DIR, '.venv-wsl', 'bin', 'python');
+const AI_ENRICH_BACKEND = process.env.AI_ENRICH_BACKEND || 'auto';
 
 const router = Router();
 
@@ -23,7 +24,7 @@ function runScript(bin, args, timeoutMs = 300_000) {
     proc.on('close', code => {
       clearTimeout(timer);
       if (code === 0) resolve(stdout.trim());
-      else reject(new Error(stderr.trim() || `exit code ${code}`));
+      else reject(new Error([stderr.trim(), stdout.trim()].filter(Boolean).join('\n') || `exit code ${code}`));
     });
     proc.on('error', err => { clearTimeout(timer); reject(err); });
   });
@@ -52,7 +53,7 @@ router.post('/', async (req, res) => {
   try {
     // Step 1: enrich abstract + connect via Claude CLI (blocking — must finish before responding)
     const enrichScript = join(SCRIPTS_DIR, 'enrich_notes.py');
-    await runScript('python3', [enrichScript, '--file', fullPath], 300_000);
+    await runScript('python3', [enrichScript, '--backend', AI_ENRICH_BACKEND, '--file', fullPath], 300_000);
 
     // Step 2: respond immediately, update search index in background
     res.json({ ok: true, path: relativePath });
