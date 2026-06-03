@@ -75,7 +75,11 @@
       "Bash(grep -n source-notes /mnt/d/vibe_coding_project/Card_Box_Note_Management/src/app/pages/*.tsx)",
       "mcp__plugin_everything-claude-code_playwright__browser_navigate",
       "mcp__plugin_everything-claude-code_playwright__browser_install",
-      "Bash(zsh -lic 'which node npm 2>/dev/null; node -v 2>/dev/null')"
+      "Bash(zsh -lic 'which node npm 2>/dev/null; node -v 2>/dev/null')",
+      "Bash(git pull *)",
+      "Bash(git push *)",
+      "Bash(git stash *)",
+      "Bash(git add *)"
     ]
   }
 }
