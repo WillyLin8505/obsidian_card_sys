@@ -15,6 +15,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.llms import MockLLM
 
+from _device import pick_device
+
 PERSIST_DIR = Path(__file__).parent / "storage"
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 64
@@ -41,7 +43,7 @@ def main():
         print(f"File not found: {path}", file=sys.stderr)
         sys.exit(1)
 
-    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device="cuda")
+    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device=pick_device())
     Settings.llm = MockLLM()
     Settings.node_parser = SentenceSplitter(
         chunk_size=CHUNK_SIZE,

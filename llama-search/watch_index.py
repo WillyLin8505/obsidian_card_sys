@@ -14,6 +14,8 @@ from llama_index.core import (
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 
+from _device import pick_device
+
 VAULT_DIR = "/mnt/d/obsidian/personal_willy"
 PERSIST_DIR = "./storage"
 DEBOUNCE_SECONDS = 2.0
@@ -99,7 +101,7 @@ def sync_missing(index, index_mtime: float):
 
 
 def main():
-    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device="cuda")
+    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device=pick_device())
     Settings.llm = Ollama(model="qwen2.5", request_timeout=120.0)
 
     print(f"Loading index from {PERSIST_DIR} ...")

@@ -16,6 +16,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.llms import MockLLM
 
+from _device import pick_device
+
 VAULT_DIR = (
     os.environ.get("OBSIDIAN_VAULT_PATH")
     or os.environ.get("OBSIDIAN_VAULT_PATHS", "").split(",")[0]
@@ -55,7 +57,7 @@ def main():
     if persist_path.exists():
         shutil.rmtree(persist_path)
 
-    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device="cuda")
+    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device=pick_device())
     Settings.llm = MockLLM()
     Settings.node_parser = SentenceSplitter(
         chunk_size=CHUNK_SIZE,

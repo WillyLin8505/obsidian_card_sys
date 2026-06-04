@@ -138,7 +138,8 @@ function patchUploadDialogHandling() {
 }
 
 function startServer() {
-  console.log('[notebooklm] starting REST API on http://127.0.0.1:3000');
+  const httpPort = process.env.HTTP_PORT || '3000';
+  console.log(`[notebooklm] starting REST API on http://127.0.0.1:${httpPort}`);
   const child = spawn('npm', ['run', 'start:http'], {
     cwd: PACKAGE_DIR,
     env: {

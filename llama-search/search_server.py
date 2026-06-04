@@ -41,6 +41,8 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.llms import MockLLM
 from sentence_transformers import CrossEncoder
 
+from _device import pick_device
+
 PERSIST_DIR = Path(__file__).parent / "storage"
 VAULT_DIR = Path("/mnt/d/obsidian/personal_willy")
 EMBED_MODEL_NAME = "BAAI/bge-m3"
@@ -187,8 +189,9 @@ def load_state_from_disk():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("載入 Embedding 模型（CUDA）...", flush=True)
-    Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME, device="cuda")
+    _device = pick_device()
+    print(f"載入 Embedding 模型（{_device}）...", flush=True)
+    Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME, device=_device)
     Settings.llm = MockLLM()
     load_state_from_disk()
     # warm-up：讓第一次真實查詢不慢

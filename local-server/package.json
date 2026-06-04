@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "notebooklm:start": "node scripts/start_notebooklm_mcp.js",
+    "notebooklm:start": "node --env-file=.env scripts/start_notebooklm_mcp.js",
     "app:gateway": "node app-gateway.js",
     "app:tunnel": "./bin/cloudflared tunnel --url http://127.0.0.1:3020",
     "youtube:watch": "node scripts/youtube_notebooklm_watch.js",
