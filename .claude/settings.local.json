@@ -79,7 +79,32 @@
       "Bash(git pull *)",
       "Bash(git push *)",
       "Bash(git stash *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(node --experimental-strip-types --input-type=module -e ' *)",
+      "Bash(cat data/contacts.json)",
+      "Bash(cat data/interactions.json)",
+      "Bash(cd *)",
+      "Read(//mnt/d/obsidian/**)",
+      "Read(//Users/willylin/**)",
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./local-server/package.json'\\).scripts,null,2\\)\\)\")",
+      "Bash(curl -# -L -o cloudflared-darwin.tgz https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz)",
+      "Bash(tar xzf *)",
+      "Bash(rm cloudflared-darwin.tgz)",
+      "Bash(chmod +x cloudflared)",
+      "Bash(./cloudflared --version)",
+      "Read(//private/tmp/**)",
+      "Bash(break)",
+      "Bash(export OBSIDIAN_VAULT_PATH=/Users/willylin/Desktop/Willy_2026)",
+      "Bash(nohup .venv-wsl/bin/python build_index.py)",
+      "Bash(echo \"build_index PID: $!\")",
+      "Read(//tmp/**)",
+      "Bash(ps -p 64039 -o pid,ppid,etime,command)",
+      "Bash(ps -p 70145 -o pid,etime,%cpu,command)",
+      "Bash(kill -0 70145)",
+      "Bash(node -e \"const s=require\\('./package.json'\\).scripts; console.log\\('notebooklm:start =>', s['notebooklm:start']\\)\")",
+      "Bash(node --help)",
+      "Bash(ps -p 70145 -o pid,etime)"
     ]
   }
 }
