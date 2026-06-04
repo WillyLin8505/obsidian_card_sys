@@ -13,8 +13,8 @@ export const DEFAULT_CARD_FONT_SIZES: CardFontSizes = {
 };
 
 export const DEFAULT_CONFIG: Config = {
-  notePath: '~/Documents/Notes',
-  sourceNoteSavePath: '',
+  notePath: '/mnt/d/obsidian/Willy_2026',
+  sourceNoteSavePath: '/mnt/d/obsidian/Willy_2026/sources/news',
   dataSource: 'supabase',
   obsidianBackendUrl: 'http://localhost:3001',
   allowExternalAnalysis: false,
