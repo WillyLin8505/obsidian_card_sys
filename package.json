@@ -6,7 +6,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "dev:all": "concurrently -n \"frontend,backend,notebooklm,gateway,tunnel\" -c \"blue,green,yellow,magenta,cyan\" \"vite\" \"cd local-server && npm run dev\" \"cd local-server && npm run notebooklm:start\" \"cd local-server && npm run app:gateway\" \"cd local-server && npm run app:tunnel\"",
+    "dev:all": "git pull --rebase origin main && concurrently -n \"frontend,backend,notebooklm,gateway,tunnel\" -c \"blue,green,yellow,magenta,cyan\" \"vite\" \"cd local-server && npm run dev\" \"cd local-server && npm run notebooklm:start\" \"cd local-server && npm run app:gateway\" \"cd local-server && npm run app:tunnel\"",
+    "sync": "sh scripts/sync.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
