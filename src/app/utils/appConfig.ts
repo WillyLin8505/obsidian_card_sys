@@ -17,9 +17,9 @@ export const DEFAULT_CARD_FONT_SIZES: CardFontSizes = {
 // over these lines on every sync. Neutral fallbacks keep the repo conflict-free.
 const ENV = (import.meta as { env?: Record<string, string | undefined> }).env || {};
 export const DEFAULT_CONFIG: Config = {
-  notePath: '/mnt/d/obsidian/Willy_2026',
-  sourceNoteSavePath: '/mnt/d/obsidian/Willy_2026/sources/news',
-  dataSource: 'supabase',
+  notePath: ENV.VITE_DEFAULT_VAULT_PATH || '',
+  sourceNoteSavePath: ENV.VITE_DEFAULT_SOURCE_NOTE_PATH || '',
+  dataSource: (ENV.VITE_DEFAULT_DATA_SOURCE as Config['dataSource']) || 'obsidian',
   obsidianBackendUrl: 'http://localhost:3001',
   allowExternalAnalysis: false,
   fleetNoteTemplate: {
