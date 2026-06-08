@@ -12,6 +12,10 @@ export const DEFAULT_CARD_FONT_SIZES: CardFontSizes = {
   metadata: 11,
 };
 
+// Machine-specific defaults come from an untracked .env.local (VITE_* vars),
+// NOT from committed code — otherwise each machine (Mac vs WSL) would fight
+// over these lines on every sync. Neutral fallbacks keep the repo conflict-free.
+const ENV = (import.meta as { env?: Record<string, string | undefined> }).env || {};
 export const DEFAULT_CONFIG: Config = {
   notePath: '/mnt/d/obsidian/Willy_2026',
   sourceNoteSavePath: '/mnt/d/obsidian/Willy_2026/sources/news',

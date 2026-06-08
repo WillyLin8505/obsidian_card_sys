@@ -54,10 +54,16 @@ function extractUrlCandidates(...values) {
   const text = values.map(valueToText).filter(Boolean).join('\n').trim();
   if (!text) return [];
 
-  try {
-    return [new URL(text).toString()];
-  } catch {
-    // Continue and extract a URL embedded in shared text.
+  // Only fast-path a single bare URL. A multi-line blob (e.g. the same URL
+  // repeated by valueToText across body.url + body) must NOT be handed to
+  // `new URL()`, because the WHATWG parser strips newlines and silently fuses
+  // the copies into one garbage URL. Fall through to the regex+Set dedupe path.
+  if (!/\s/.test(text)) {
+    try {
+      return [new URL(text).toString()];
+    } catch {
+      // Continue and extract a URL embedded in shared text.
+    }
   }
 
   const matches = text.match(/https?:\/\/[^\s<>"'，。、《》「」]+/gi) || [];

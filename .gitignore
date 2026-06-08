@@ -29,3 +29,6 @@ local-server/config/source-note-template.local.json
 # Claude Code hook execution log
 .claude/hook-execution.jsonl
 .gstack/
+
+# iOS Shortcut exports (contain IOS_SHARE_TOKEN)
+*.shortcut
