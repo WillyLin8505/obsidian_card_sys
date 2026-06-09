@@ -1,7 +1,10 @@
 #!/bin/bash
-# Automatic git sync for the Card System repo.
-# Commits local changes, rebases on remote, and pushes — safe to run on a timer.
+# Manual git sync for the Card System repo. Run when you finish a milestone:
+#   npm run sync               -> commit message "sync: <timestamp>"
+#   npm run sync -- "my note"  -> commit message "my note"
+# Commits local changes, rebases on remote, and pushes.
 set -uo pipefail
+MSG="${1:-sync: $(date '+%Y-%m-%d %H:%M')}"
 
 REPO="/Users/willylin/Desktop/vibe_coding/obsidian_card_sys"
 BRANCH="main"
@@ -30,7 +33,7 @@ fi
 # Stage everything and commit only if there is something to commit.
 git add -A
 if ! git diff --cached --quiet; then
-  git commit -m "chore: auto-sync $(ts)" >> "$LOG" 2>&1 && log "committed local changes"
+  git commit -m "$MSG" >> "$LOG" 2>&1 && log "committed local changes: $MSG"
 fi
 
 # Integrate remote changes safely; abort on conflict instead of leaving a mess.
