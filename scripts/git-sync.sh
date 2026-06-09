@@ -21,6 +21,12 @@ if [ "$cur" != "$BRANCH" ]; then
   exit 0
 fi
 
+# Only sync when there is an actual change. A clean working tree = nothing to
+# do, so exit immediately (no commit, no network pull, no push).
+if [ -z "$(git status --porcelain)" ]; then
+  exit 0
+fi
+
 # Stage everything and commit only if there is something to commit.
 git add -A
 if ! git diff --cached --quiet; then
