@@ -1,11 +1,10 @@
-import os
 from llama_index.core import StorageContext, load_index_from_storage, Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 
 from _device import pick_device
 
-PERSIST_DIR = os.environ.get("LLAMA_STORAGE_DIR") or "./storage"
+PERSIST_DIR = "./storage"
 
 def main():
     Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-m3", device=pick_device())

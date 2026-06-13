@@ -17,8 +17,7 @@ from llama_index.core.llms import MockLLM
 
 from _device import pick_device
 
-import os as _os
-PERSIST_DIR = Path(_os.environ["LLAMA_STORAGE_DIR"]) if _os.environ.get("LLAMA_STORAGE_DIR") else Path(__file__).parent / "storage"
+PERSIST_DIR = Path(__file__).parent / "storage"
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 64
 
