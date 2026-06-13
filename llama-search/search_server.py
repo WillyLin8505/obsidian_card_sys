@@ -43,7 +43,7 @@ from sentence_transformers import CrossEncoder
 
 from _device import pick_device
 
-PERSIST_DIR = Path(__file__).parent / "storage"
+PERSIST_DIR = Path(os.environ["LLAMA_STORAGE_DIR"]) if os.environ.get("LLAMA_STORAGE_DIR") else Path(__file__).parent / "storage"
 VAULT_DIR = Path("/mnt/d/obsidian/personal_willy")
 EMBED_MODEL_NAME = "BAAI/bge-m3"
 RERANK_MODEL_NAME = "BAAI/bge-reranker-base"

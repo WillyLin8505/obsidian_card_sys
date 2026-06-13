@@ -23,7 +23,11 @@ VAULT_DIR = (
     or os.environ.get("OBSIDIAN_VAULT_PATHS", "").split(",")[0]
     or "/mnt/d/obsidian/personal_willy"
 )
-PERSIST_DIR = str(Path(__file__).resolve().parent / "storage")
+PERSIST_DIR = str(
+    Path(os.environ["LLAMA_STORAGE_DIR"])
+    if os.environ.get("LLAMA_STORAGE_DIR")
+    else Path(__file__).resolve().parent / "storage"
+)
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 64
 

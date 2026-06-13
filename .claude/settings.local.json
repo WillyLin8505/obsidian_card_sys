@@ -104,7 +104,25 @@
       "Bash(kill -0 70145)",
       "Bash(node -e \"const s=require\\('./package.json'\\).scripts; console.log\\('notebooklm:start =>', s['notebooklm:start']\\)\")",
       "Bash(node --help)",
-      "Bash(ps -p 70145 -o pid,etime)"
+      "Bash(ps -p 70145 -o pid,etime)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s http://localhost:3001/health)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(curl -s http://localhost:3020)",
+      "Bash(curl -si http://localhost:3020/health)",
+      "Bash(curl -si http://localhost:3020/)",
+      "Bash(tailscale serve *)",
+      "Bash(curl -si https://desktop-6o0unv6-2.taileefcfe.ts.net/permanent-notes)",
+      "Bash(file local-server/bin/*)",
+      "Read(//home/sssss/.claude/hooks/**)",
+      "Bash(curl -si https://gabriel-arabic-stereo-admit.trycloudflare.com/)",
+      "Bash(journalctl _PID=283226 --no-pager -n 10)",
+      "Bash(curl -s http://localhost:20241/metrics)",
+      "Bash(curl -s http://localhost:20242/metrics)",
+      "Bash(npm run *)",
+      "Bash(./node_modules/.bin/vitest run *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(chmod +x *)"
     ]
   }
 }

@@ -17,7 +17,8 @@ from llama_index.llms.ollama import Ollama
 from _device import pick_device
 
 VAULT_DIR = "/mnt/d/obsidian/personal_willy"
-PERSIST_DIR = "./storage"
+import os
+PERSIST_DIR = os.environ.get("LLAMA_STORAGE_DIR") or "./storage"
 DEBOUNCE_SECONDS = 2.0
 
 
