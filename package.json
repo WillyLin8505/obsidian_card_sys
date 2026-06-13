@@ -7,7 +7,7 @@
     "build": "vite build",
     "dev": "vite",
     "dev:all": "git pull --rebase origin main && concurrently -n \"frontend,backend,notebooklm,gateway,tunnel\" -c \"blue,green,yellow,magenta,cyan\" \"vite\" \"cd local-server && npm run dev\" \"cd local-server && npm run notebooklm:start\" \"cd local-server && npm run app:gateway\" \"cd local-server && npm run app:tunnel\"",
-    "start-all": "concurrently -k -n \"frontend,server,ios-gw,app-gw,tunnel\" -c \"blue,green,magenta,yellow,cyan\" \"vite\" \"cd local-server && npm run start\" \"cd local-server && npm run ios-share:gateway\" \"cd local-server && npm run app:gateway\" \"cd local-server && ./bin/cloudflared tunnel --config $HOME/.cloudflared/cardbox.yml run\"",
+    "start-all": "concurrently -k -n \"frontend,server,ios-gw,app-gw,cs-tunnel,ios-tunnel\" -c \"blue,green,magenta,yellow,cyan,white\" \"vite\" \"cd local-server && npm run start\" \"cd local-server && npm run ios-share:gateway\" \"cd local-server && npm run app:gateway\" \"cd local-server && ./bin/cloudflared tunnel --config $HOME/.cloudflared/cardbox.yml run\" \"cd local-server && ./bin/cloudflared tunnel --config $HOME/.cloudflared/ios-share.yml run\"",
     "sync": "bash scripts/git-sync.sh",
     "test": "vitest run",
     "test:watch": "vitest",
