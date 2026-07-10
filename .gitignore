@@ -32,3 +32,5 @@ local-server/config/source-note-template.local.json
 
 # iOS Shortcut exports (contain IOS_SHARE_TOKEN)
 *.shortcut
+.spectra/
+openspec/.vector-search.db*

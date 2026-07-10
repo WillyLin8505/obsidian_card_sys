@@ -1,50 +1,51 @@
 {
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/forbidden-commands.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/g5-pre-deploy.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/g1-design-check.sh"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
-        "matcher": "Edit",
         "hooks": [
           {
-            "type": "command",
-            "command": "bash .claude/hooks/g4-knowledge-check.sh"
+            "command": "bash .claude/hooks/g4-knowledge-check.sh",
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "Edit"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash .claude/hooks/forbidden-commands.sh",
+            "type": "command"
+          },
+          {
+            "command": "bash .claude/hooks/g5-pre-deploy.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash .claude/hooks/g1-design-check.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit"
       }
     ],
     "Stop": [
       {
         "hooks": [
           {
-            "type": "command",
             "command": "bash .claude/hooks/stop-validator.sh",
-            "timeout": 120
+            "timeout": 120,
+            "type": "command"
           }
         ]
       }
     ]
-  }
+  },
+  "includeGitInstructions": false
 }
