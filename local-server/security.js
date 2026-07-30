@@ -6,9 +6,11 @@ export function resolveUserPath(p) {
   if (typeof p !== 'string') return '';
   const trimmed = p.trim();
   if (trimmed.startsWith('~')) return join(homedir(), trimmed.slice(1));
-  // Convert Windows-style paths to WSL paths (e.g. D:\foo\bar → /mnt/d/foo/bar)
   const winMatch = trimmed.match(/^([A-Za-z]):[/\\](.*)/);
   if (winMatch) {
+    // Native Windows: keep the drive path as-is (fs resolves D:\... fine).
+    // Only translate to a WSL mount (/mnt/d/...) when actually running on Linux.
+    if (process.platform === 'win32') return trimmed;
     const drive = winMatch[1].toLowerCase();
     const rest = winMatch[2].replace(/\\/g, '/');
     return `/mnt/${drive}/${rest}`;
