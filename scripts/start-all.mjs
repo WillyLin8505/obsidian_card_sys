@@ -72,10 +72,31 @@ const CLOUDFLARED_BIN = resolveCloudflared();
 const TUNNEL_CONFIG = resolveTunnelConfig();
 const NODE = process.execPath;
 
+// On Windows the Claude CLI (used by the backend for every AI feature) is only
+// authenticated inside WSL, and the vault/index tooling was built there too. So
+// the backend runs inside WSL; the tunnel + other node procs stay native and
+// reach it over WSL2 localhost forwarding. Force native with SERVER_NATIVE=1.
+const WSL_DISTRO = process.env.WSL_DISTRO || ''; // '' => default distro
+const RUN_SERVER_IN_WSL = platform() === 'win32' && process.env.SERVER_NATIVE !== '1';
+
+function toWslPath(p) {
+  const m = String(p).match(/^([A-Za-z]):[\\/](.*)$/);
+  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : p;
+}
+
+function wslServerProc() {
+  const distro = WSL_DISTRO ? ['-d', WSL_DISTRO] : [];
+  // login shell (-l) so ~/.local/bin (claude) is on PATH; PORT pinned inline.
+  const inner = `cd '${toWslPath(LOCAL_SERVER)}' && PORT=${PORT} exec node server.js`;
+  return { cmd: 'wsl.exe', args: [...distro, '--', 'bash', '-lc', inner], cwd: ROOT, wsl: true };
+}
+
+const nativeServer = { cmd: NODE, args: ['server.js'], cwd: LOCAL_SERVER, env: { PORT } };
+
 // Each process runs a plain node script or the cloudflared binary directly.
 const PROCS = {
   frontend: { cmd: NODE, args: [join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js')], cwd: ROOT },
-  server: { cmd: NODE, args: ['server.js'], cwd: LOCAL_SERVER, env: { PORT } },
+  server: RUN_SERVER_IN_WSL ? wslServerProc() : nativeServer,
   'ios-gw': { cmd: NODE, args: ['ios-share-gateway.js'], cwd: LOCAL_SERVER },
   'app-gw': { cmd: NODE, args: ['app-gateway.js'], cwd: LOCAL_SERVER },
   tunnel: { cmd: CLOUDFLARED_BIN, args: ['tunnel', '--config', TUNNEL_CONFIG, 'run'], cwd: ROOT },
@@ -102,7 +123,7 @@ function meta(msg) {
 }
 
 meta(`platform=${platform()} node=${process.version}`);
-meta(`backend PORT=${PORT}  (must match knowledge-api in ${TUNNEL_CONFIG})`);
+meta(`backend: ${RUN_SERVER_IN_WSL ? `WSL${WSL_DISTRO ? ` (${WSL_DISTRO})` : ' (default distro)'}` : 'native'}  PORT=${PORT} (must match knowledge-api in ${TUNNEL_CONFIG})`);
 meta(`cloudflared=${CLOUDFLARED_BIN}`);
 meta(`running: ${names.join(', ')}`);
 
@@ -137,6 +158,14 @@ function shutdown(code = 0) {
     if (child.exitCode === null && child.signalCode === null) {
       try { child.kill('SIGTERM'); } catch (e) { meta(`kill ${name} failed: ${e.message}`); }
     }
+  }
+  // Killing wsl.exe doesn't reap the node running inside WSL — do it explicitly
+  // so a restart doesn't hit an orphaned backend still holding the port.
+  if (RUN_SERVER_IN_WSL && names.includes('server')) {
+    const distro = WSL_DISTRO ? ['-d', WSL_DISTRO] : [];
+    try {
+      spawn('wsl.exe', [...distro, '--', 'pkill', '-f', 'node server.js'], { stdio: 'ignore', windowsHide: true });
+    } catch { /* best effort */ }
   }
   setTimeout(() => process.exit(code), 800).unref();
 }
