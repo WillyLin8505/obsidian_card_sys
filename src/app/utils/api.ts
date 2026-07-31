@@ -10,6 +10,9 @@ async function fetchLocal(url: string, options?: RequestInit, fallback = 'Reques
     headers: localHeaders(options?.headers),
   });
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('後端未授權（401）：請到「設定」頁填入正確的 Local Server Token（需與後端 .env 的 LOCAL_SERVER_TOKEN 完全相同），儲存後重新整理。');
+    }
     const err = await response.json().catch(() => ({ error: response.statusText }));
     throw new Error(err.error || fallback);
   }

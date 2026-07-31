@@ -92,8 +92,9 @@ export function AllFiles() {
         const sorted = sortByRecentActivity(fetchedNotes);
         setNotes(sorted);
         setFilteredNoteIds(sorted.map(n => n.id));
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error fetching notes:', error);
+        toast.error(`載入筆記失敗：${error?.message || error}`);
       } finally {
         setLoading(false);
       }
