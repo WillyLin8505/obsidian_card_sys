@@ -144,7 +144,8 @@ function wrapLabel(name: string, maxChars: number, maxLines: number = LABEL_MAX_
 //   Y axis = vertical position within each depth column
 //   Labels = always to the right of the node circle
 
-const LABEL_MAX_CHARS = 9;
+const LABEL_MAX_CHARS = 20; // wider so long English titles read as horizontal bars, not vertical strips
+const LABEL_CHAR_W = 0.66;  // approx average glyph width as a fraction of font size
 const LABEL_MAX_LINES = 4;
 const EXPANDED_LABEL_MAX_LINES = 100; // fullscreen: effectively "show the whole title"
 const LABEL_PAD_X = 6;
@@ -205,6 +206,13 @@ function nodeCircleRadius(depth: number, isCenter = false) {
   return isCenter ? 7 : Math.max(3, 6 - Math.abs(depth));
 }
 
+// Fixed label-box text width so every box lines up (label-mode analogue of CARD_W).
+// Uniform per font tier: all non-center labels share one width, so boxes in a
+// category are the same length instead of hugging each title's own text.
+function labelBoxTextWidth(isCenter: boolean): number {
+  return LABEL_MAX_CHARS * (isCenter ? 9 : 7) * LABEL_CHAR_W;
+}
+
 function labelBoxMetrics(node: any, ctx: CanvasRenderingContext2D) {
   const d = node.depth as number;
   const isCenter = node.isCenter as boolean;
@@ -221,12 +229,11 @@ function labelBoxMetrics(node: any, ctx: CanvasRenderingContext2D) {
   ctx.textBaseline = 'middle';
 
   ctx.textAlign = 'left';
-  const maxW = Math.max(...lines.map(l => cachedTextWidth(ctx, l)));
   const labelX = nx + r + LABEL_NODE_MIN_GAP;
   const labelCy = ny;
   const boxX = labelX - LABEL_PAD_X / 2;
   const boxY = labelCy - totalH / 2 - LABEL_PAD_Y / 2;
-  const boxW = maxW + LABEL_PAD_X;
+  const boxW = labelBoxTextWidth(isCenter) + LABEL_PAD_X;
   const boxH = totalH + LABEL_PAD_Y;
 
   return { r, nx, ny, lines, lineH, labelX, labelCy, boxX, boxY, boxW, boxH };
@@ -254,11 +261,10 @@ function estimatedLabelBoxBounds(node: any, cardMode = false) {
   const lines = labelLines(node);
   const lineH = fontSize + 2;
   const totalH = lines.length * lineH;
-  const maxW = Math.max(...lines.map(line => line.length * fontSize));
   const labelX = nx + r + LABEL_NODE_MIN_GAP;
   const boxX = labelX - LABEL_PAD_X / 2;
   const boxY = ny - totalH / 2 - LABEL_PAD_Y / 2;
-  const boxW = maxW + LABEL_PAD_X;
+  const boxW = labelBoxTextWidth(isCenter) + LABEL_PAD_X;
   const boxH = totalH + LABEL_PAD_Y;
   const circleR = r + (isCenter ? 3 : 0);
 
@@ -627,10 +633,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
     function estimateTextWidth(id: string): number {
       if (cardMode) return CARD_W / 2;
-      const isCenter = centerSet.has(id);
-      const lines = wrapLabel(displayName(id), LABEL_MAX_CHARS, labelMaxLines);
-      const maxLen = Math.max(...lines.map(l => l.length));
-      return maxLen * (isCenter ? 9 : 7);
+      return labelBoxTextWidth(centerSet.has(id));
     }
 
     function labelBoxRightOffset(id: string, d: number): number {
@@ -891,9 +894,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
 
     function estimateTextWidth(node: any): number {
       if (cardMode) return CARD_W / 2;
-      const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS, labelMaxLines);
-      const maxLen = Math.max(...lines.map(l => l.length));
-      return maxLen * (node.isCenter ? 9 : 7);
+      return labelBoxTextWidth(node.isCenter as boolean);
     }
 
     function labelBoxRightOffset(node: any): number {
