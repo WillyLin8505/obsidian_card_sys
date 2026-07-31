@@ -17,6 +17,8 @@ interface Props {
   onNodeConnect?: (sourceId: string, targetId: string) => void;
   depth?: number;
   onDepthChange?: (depth: number) => void;
+  /** Fullscreen view: show full note titles instead of the compact 4-line preview. */
+  expanded?: boolean;
 }
 
 const CENTER_COLOR = '#34d399';
@@ -144,6 +146,7 @@ function wrapLabel(name: string, maxChars: number, maxLines: number = LABEL_MAX_
 
 const LABEL_MAX_CHARS = 9;
 const LABEL_MAX_LINES = 4;
+const EXPANDED_LABEL_MAX_LINES = 100; // fullscreen: effectively "show the whole title"
 const LABEL_PAD_X = 6;
 const LABEL_PAD_Y = 3;
 const LABEL_NODE_MIN_GAP = 6;
@@ -349,7 +352,8 @@ function computeFocusedLayout(
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClick, onNodeRightClick, onNodeConnect, depth, onDepthChange }: Props) {
+export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClick, onNodeRightClick, onNodeConnect, depth, onDepthChange, expanded = false }: Props) {
+  const labelMaxLines = expanded ? EXPANDED_LABEL_MAX_LINES : LABEL_MAX_LINES;
   const graphRef = useRef<any>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const prevCenterKeyRef = useRef<string>('');
@@ -617,14 +621,14 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       const isCenter = centerSet.has(id);
       const fontSize = isCenter ? 9 : 7;
       const lineH = fontSize + 2;
-      const lines = wrapLabel(displayName(id), LABEL_MAX_CHARS);
+      const lines = wrapLabel(displayName(id), LABEL_MAX_CHARS, labelMaxLines);
       return lines.length * lineH + LABEL_PAD_Y;
     }
 
     function estimateTextWidth(id: string): number {
       if (cardMode) return CARD_W / 2;
       const isCenter = centerSet.has(id);
-      const lines = wrapLabel(displayName(id), LABEL_MAX_CHARS);
+      const lines = wrapLabel(displayName(id), LABEL_MAX_CHARS, labelMaxLines);
       const maxLen = Math.max(...lines.map(l => l.length));
       return maxLen * (isCenter ? 9 : 7);
     }
@@ -795,7 +799,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       return {
         id,
         name,
-        labelLines: wrapLabel(name, LABEL_MAX_CHARS),
+        labelLines: wrapLabel(name, LABEL_MAX_CHARS, labelMaxLines),
         depth: d,
         isCenter: centerSet.has(id),
         isIncoming: d < 0,
@@ -830,7 +834,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     });
 
     return { nodes, links };
-  }, [allNotes, centerNoteIds, centerSet, outMap, inMap, missingNodeNames, computedDepth, noteIds, limitedCategoryByNodeId, cardMode, noteContentMap]);
+  }, [allNotes, centerNoteIds, centerSet, outMap, inMap, missingNodeNames, computedDepth, noteIds, limitedCategoryByNodeId, cardMode, noteContentMap, labelMaxLines]);
 
   const categoryList = useMemo(() => {
     const categories = graphData.nodes
@@ -881,13 +885,13 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
       if (cardMode) return getNodeLabelH(node, true);
       const fontSize = node.isCenter ? 9 : 7;
       const lineH = fontSize + 2;
-      const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS);
+      const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS, labelMaxLines);
       return lines.length * lineH + LABEL_PAD_Y;
     }
 
     function estimateTextWidth(node: any): number {
       if (cardMode) return CARD_W / 2;
-      const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS);
+      const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS, labelMaxLines);
       const maxLen = Math.max(...lines.map(l => l.length));
       return maxLen * (node.isCenter ? 9 : 7);
     }
@@ -978,7 +982,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
         return { ...link, source: sourceId, target: targetId };
       }).filter((link: any) => nodeById.has(link.source) && nodeById.has(link.target)),
     };
-  }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories, cardMode]);
+  }, [graphData, categoryList, limitedCategoryByNodeId, enabledCategories, cardMode, labelMaxLines]);
 
   const lowPowerGraph = isTouchDevice || dims.width <= TABLET_GRAPH_WIDTH || visibleGraphData.nodes.length > 120;
 

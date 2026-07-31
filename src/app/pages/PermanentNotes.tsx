@@ -1692,6 +1692,7 @@ export function PermanentNotes() {
             <div className={`min-w-0 ${isMobile ? 'flex-1' : 'flex-1'}`}>
               <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-gray-500">載入圖譜中...</div>}>
                 <NoteGraph
+                  expanded
                   allNotes={allNotes}
                   centerNoteIds={graphCenterIds}
                   depth={graphDepth}
