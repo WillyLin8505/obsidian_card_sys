@@ -105,20 +105,33 @@ function normalizeLinkKey(value: unknown): string | null {
   return normalizeNoteLinkKey(value);
 }
 
-function wrapLabel(name: string, maxChars: number): string[] {
-  if (name.length <= maxChars) return [name];
-  const spaceIdx = name.lastIndexOf(' ', maxChars);
-  let cut = maxChars;
-  if (spaceIdx > Math.floor(maxChars / 2)) {
-    const first = name.slice(0, spaceIdx);
-    const rest = name.slice(spaceIdx + 1).trimStart();
-    return [first, ...wrapLabel(rest, maxChars)];
+function wrapLabel(name: string, maxChars: number, maxLines: number = LABEL_MAX_LINES): string[] {
+  const text = String(name ?? '').trim();
+  if (!text) return [''];
+
+  const lines: string[] = [];
+  let rest = text;
+  while (rest.length > 0 && lines.length < maxLines) {
+    if (rest.length <= maxChars) {
+      lines.push(rest);
+      rest = '';
+      break;
+    }
+    // Last allowed line: keep the remainder trimmed to width with an ellipsis
+    // so a very long title becomes a compact box instead of a tall strip.
+    if (lines.length === maxLines - 1) {
+      lines.push(rest.slice(0, Math.max(1, maxChars - 1)).trimEnd() + '…');
+      rest = '';
+      break;
+    }
+    // Prefer breaking at a space (whole words). Only hard-break when a single
+    // word is longer than maxChars — never one character per line.
+    const spaceIdx = rest.lastIndexOf(' ', maxChars);
+    const cut = spaceIdx > 0 ? spaceIdx : maxChars;
+    lines.push(rest.slice(0, cut).trimEnd());
+    rest = rest.slice(cut).trimStart();
   }
-  if (/[a-zA-Z0-9]/.test(name[cut - 1]) && name[cut] && /[a-zA-Z0-9]/.test(name[cut])) {
-    while (cut > 1 && /[a-zA-Z0-9]/.test(name[cut - 1])) cut--;
-    if (cut === 0) cut = maxChars;
-  }
-  return [name.slice(0, cut).trimEnd(), ...wrapLabel(name.slice(cut).trimStart(), maxChars)];
+  return lines.length ? lines : [text];
 }
 
 // ── Layout constants ────────────────────────────────────────────────────────
@@ -130,6 +143,7 @@ function wrapLabel(name: string, maxChars: number): string[] {
 //   Labels = always to the right of the node circle
 
 const LABEL_MAX_CHARS = 9;
+const LABEL_MAX_LINES = 4;
 const LABEL_PAD_X = 6;
 const LABEL_PAD_Y = 3;
 const LABEL_NODE_MIN_GAP = 6;
