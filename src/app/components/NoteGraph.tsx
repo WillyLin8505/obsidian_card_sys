@@ -276,13 +276,13 @@ function estimatedLabelBoxBounds(node: any, cardMode = false) {
   };
 }
 
-function getNodeLabelH(node: any, cardMode = false): number {
+function getNodeLabelH(node: any, cardMode = false, maxLines: number = LABEL_MAX_LINES): number {
   if (cardMode) {
     return CARD_H;
   }
   const fontSize = (node.isCenter as boolean) ? 9 : 7;
   const lineH = fontSize + 2;
-  const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS);
+  const lines = wrapLabel(node.name as string, LABEL_MAX_CHARS, maxLines);
   return lines.length * lineH + LABEL_PAD_Y;
 }
 
@@ -292,6 +292,7 @@ function computeFocusedLayout(
   nodes: any[],
   highlightIds: Set<string>,
   cardMode = false,
+  maxLines: number = LABEL_MAX_LINES,
 ): Map<string, { x: number; y: number }> {
   const layout = new Map<string, { x: number; y: number }>();
 
@@ -321,7 +322,7 @@ function computeFocusedLayout(
     function packGroup(group: any[]): Array<{ id: string; y: number }> {
       const ys: number[] = [0];
       for (let i = 1; i < group.length; i++) {
-        const minDist = (getNodeLabelH(group[i - 1], cardMode) + getNodeLabelH(group[i], cardMode)) / 2 + LABEL_BOX_GAP;
+        const minDist = (getNodeLabelH(group[i - 1], cardMode, maxLines) + getNodeLabelH(group[i], cardMode, maxLines)) / 2 + LABEL_BOX_GAP;
         ys.push(ys[i - 1] + minDist);
       }
       const mid = group.length > 1 ? (ys[0] + ys[ys.length - 1]) / 2 : 0;
@@ -329,8 +330,8 @@ function computeFocusedLayout(
     }
 
     const hlPacked = packGroup(highlighted);
-    const hlTop = hlPacked[0].y - getNodeLabelH(highlighted[0], cardMode) / 2;
-    const hlBot = hlPacked[hlPacked.length - 1].y + getNodeLabelH(highlighted[highlighted.length - 1], cardMode) / 2;
+    const hlTop = hlPacked[0].y - getNodeLabelH(highlighted[0], cardMode, maxLines) / 2;
+    const hlBot = hlPacked[hlPacked.length - 1].y + getNodeLabelH(highlighted[highlighted.length - 1], cardMode, maxLines) / 2;
 
     hlPacked.forEach(r => layout.set(r.id, { x: cx, y: r.y }));
 
@@ -340,14 +341,14 @@ function computeFocusedLayout(
 
     if (dimAbove.length > 0) {
       const packed  = packGroup(dimAbove);
-      const packBot = packed[packed.length - 1].y + getNodeLabelH(dimAbove[dimAbove.length - 1], cardMode) / 2;
+      const packBot = packed[packed.length - 1].y + getNodeLabelH(dimAbove[dimAbove.length - 1], cardMode, maxLines) / 2;
       const shift   = hlTop - FOCUS_GAP - packBot;
       packed.forEach(r => layout.set(r.id, { x: cx, y: r.y + shift }));
     }
 
     if (dimBelow.length > 0) {
       const packed   = packGroup(dimBelow);
-      const packTop  = packed[0].y - getNodeLabelH(dimBelow[0], cardMode) / 2;
+      const packTop  = packed[0].y - getNodeLabelH(dimBelow[0], cardMode, maxLines) / 2;
       const shift    = hlBot + FOCUS_GAP - packTop;
       packed.forEach(r => layout.set(r.id, { x: cx, y: r.y + shift }));
     }
@@ -1134,7 +1135,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
   useLayoutEffect(() => {
     const nodes = visibleGraphData.nodes;
     if (focusedNodeId && highlightIds && highlightIds.size > 0) {
-      const focusedLayout = computeFocusedLayout(nodes, highlightIds, cardMode);
+      const focusedLayout = computeFocusedLayout(nodes, highlightIds, cardMode, labelMaxLines);
       const next = new Map<string, any>();
       nodes.forEach((node: any) => {
         const pos = focusedLayout.get(node.id as string);
@@ -1150,7 +1151,7 @@ export function NoteGraph({ allNotes, centerNoteIds, onNodeClick, onNodeCtrlClic
     } else {
       desiredNodeLayoutRef.current = new Map(nodes.map((node: any) => [node.id as string, { ...node }]));
     }
-  }, [visibleGraphData, focusedNodeId, highlightIds, cardMode]);
+  }, [visibleGraphData, focusedNodeId, highlightIds, cardMode, labelMaxLines]);
 
   // Only mark for reveal when topology (node set) actually changes
   useLayoutEffect(() => {
