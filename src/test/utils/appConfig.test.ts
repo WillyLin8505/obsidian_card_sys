@@ -166,9 +166,9 @@ describe('app config', () => {
       ...getConfig(),
       vaults: [
         { id: 'a', name: 'Work', notePath: 'D:/work' },
-        { id: 'b', name: 'Personal', notePath: 'D:/personal' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal', sourceNoteSavePath: 'P/src' },
       ],
-      activeVaultId: 'a',
+      activeVaultId: 'b',
     });
     saveConfig(seeded);
 
@@ -178,6 +178,8 @@ describe('app config', () => {
 
     const config = getConfig();
     expect(config.vaults).toHaveLength(2);
+    expect(config.activeVaultId).toBe('b');
+    expect(config.notePath).toBe('D:/personal');
   });
 
   it('saveConfig persists an explicit smaller vaults array (deletion works)', () => {
@@ -195,5 +197,25 @@ describe('app config', () => {
 
     const config = getConfig();
     expect(config.vaults).toHaveLength(1);
+  });
+
+  it('getConfig does not write back when the persisted config already has vaults populated', () => {
+    const seeded = ensureVaults({
+      ...getConfig(),
+      vaults: [
+        { id: 'a', name: 'Work', notePath: 'D:/work' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal' },
+      ],
+      activeVaultId: 'a',
+    });
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(seeded));
+
+    // Allow any bootstrap/migration write-back to happen first.
+    getConfig();
+
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+    getConfig();
+    expect(setItemSpy).not.toHaveBeenCalled();
+    setItemSpy.mockRestore();
   });
 });

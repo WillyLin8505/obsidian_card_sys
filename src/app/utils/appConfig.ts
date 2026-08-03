@@ -170,6 +170,9 @@ export function saveConfig(config: Config): void {
         const existing = JSON.parse(raw) as Partial<Config>;
         if (existing.vaults !== undefined) {
           base = { ...config, vaults: existing.vaults };
+          if (config.activeVaultId === undefined && existing.activeVaultId !== undefined) {
+            base = { ...base, activeVaultId: existing.activeVaultId };
+          }
         }
       }
     } catch {
