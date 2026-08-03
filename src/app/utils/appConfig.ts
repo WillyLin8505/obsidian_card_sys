@@ -1,4 +1,4 @@
-import { CardFontSizes, Config, DataSource, MetadataField, NoteTemplateConfig } from '../types/note';
+import { CardFontSizes, Config, DataSource, MetadataField, NoteTemplateConfig, VaultEntry } from '../types/note';
 
 export const CONFIG_KEY = 'zettelkasten_config';
 
@@ -87,15 +87,61 @@ export function migrateTemplate(value: unknown): NoteTemplateConfig {
   return { metadataFields: fields, bodyTemplate: body };
 }
 
+function deriveVaultName(notePath: string): string {
+  if (!notePath) return '預設';
+  const trimmed = notePath.replace(/[\\/]+$/, '');
+  const parts = trimmed.split(/[\\/]/);
+  const base = parts[parts.length - 1];
+  return base || '預設';
+}
+
+export function ensureVaults(config: Config): Config {
+  let vaults: VaultEntry[] = Array.isArray(config.vaults) ? config.vaults : [];
+  if (vaults.length === 0) {
+    vaults = [{
+      id: crypto.randomUUID(),
+      name: deriveVaultName(config.notePath),
+      notePath: config.notePath || '',
+      sourceNoteSavePath: config.sourceNoteSavePath,
+    }];
+  }
+  let active = vaults.find((v) => v.id === config.activeVaultId);
+  if (!active) active = vaults[0];
+  return {
+    ...config,
+    vaults,
+    activeVaultId: active.id,
+    notePath: active.notePath || '',
+    sourceNoteSavePath: active.sourceNoteSavePath,
+  };
+}
+
+export function getActiveVault(config: Config): VaultEntry | undefined {
+  const vaults = config.vaults || [];
+  if (vaults.length === 0) return undefined;
+  return vaults.find((v) => v.id === config.activeVaultId) || vaults[0];
+}
+
+export function setActiveVault(config: Config, id: string): Config {
+  const target = (config.vaults || []).find((v) => v.id === id);
+  if (!target) return config;
+  return {
+    ...config,
+    activeVaultId: id,
+    notePath: target.notePath || '',
+    sourceNoteSavePath: target.sourceNoteSavePath,
+  };
+}
+
 export function getConfig(): Config {
   const raw = localStorage.getItem(CONFIG_KEY);
-  if (!raw) return { ...DEFAULT_CONFIG };
+  if (!raw) return ensureVaults({ ...DEFAULT_CONFIG });
   const saved = JSON.parse(raw) as Record<string, unknown>;
   if ('claudeApiKey' in saved) {
     delete saved.claudeApiKey;
     localStorage.setItem(CONFIG_KEY, JSON.stringify(saved));
   }
-  return {
+  const merged: Config = {
     ...DEFAULT_CONFIG,
     ...(saved as Partial<Config>),
     cardFontSizes: { ...DEFAULT_CARD_FONT_SIZES, ...((saved.cardFontSizes as Partial<CardFontSizes>) || {}) },
@@ -103,10 +149,15 @@ export function getConfig(): Config {
     permanentNoteTemplate: migrateTemplate(saved.permanentNoteTemplate ?? DEFAULT_CONFIG.permanentNoteTemplate),
     sourceNoteTemplate: migrateTemplate(saved.sourceNoteTemplate ?? DEFAULT_CONFIG.sourceNoteTemplate),
   };
+  return ensureVaults(merged);
 }
 
 export function saveConfig(config: Config): void {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  const active = getActiveVault(config);
+  const synced: Config = active
+    ? { ...config, activeVaultId: active.id, notePath: active.notePath || '', sourceNoteSavePath: active.sourceNoteSavePath }
+    : config;
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(synced));
 }
 
 export function getDataSource(): DataSource {

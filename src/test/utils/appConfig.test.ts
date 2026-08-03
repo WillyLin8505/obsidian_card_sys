@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CONFIG_KEY, getConfig, getDataSource, getObsidianBackendUrl, localHeaders, saveConfig } from '../../app/utils/appConfig';
+import { CONFIG_KEY, ensureVaults, getActiveVault, getConfig, getDataSource, getObsidianBackendUrl, localHeaders, saveConfig, setActiveVault } from '../../app/utils/appConfig';
 
 describe('app config', () => {
   afterEach(() => {
@@ -64,5 +64,82 @@ describe('app config', () => {
     saveConfig({ ...config, obsidianBackendUrl: 'localhost:3001' });
 
     expect(getObsidianBackendUrl()).toBe('https://desktop-6o0unv6-2.taileefcfe.ts.net/api');
+  });
+
+  it('migrates a legacy single notePath into one vault (name from basename)', () => {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify({
+      dataSource: 'obsidian',
+      notePath: 'D:/obsidian/MyVault',
+      sourceNoteSavePath: 'Sources/others',
+    }));
+
+    const config = getConfig();
+    expect(config.vaults).toHaveLength(1);
+    expect(config.vaults?.[0].name).toBe('MyVault');
+    expect(config.vaults?.[0].notePath).toBe('D:/obsidian/MyVault');
+    expect(config.vaults?.[0].sourceNoteSavePath).toBe('Sources/others');
+    expect(config.activeVaultId).toBe(config.vaults?.[0].id);
+    // 頂層鏡射一致
+    expect(config.notePath).toBe('D:/obsidian/MyVault');
+    expect(config.sourceNoteSavePath).toBe('Sources/others');
+  });
+
+  it('names the synthesized vault 預設 when notePath is empty', () => {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify({ dataSource: 'obsidian', notePath: '' }));
+    const config = getConfig();
+    expect(config.vaults?.[0].name).toBe('預設');
+  });
+
+  it('setActiveVault mirrors the target vault paths to top-level fields', () => {
+    const base = getConfig();
+    const twoVaults = ensureVaults({
+      ...base,
+      vaults: [
+        { id: 'a', name: 'Work', notePath: 'D:/work', sourceNoteSavePath: 'W/src' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal', sourceNoteSavePath: 'P/src' },
+      ],
+      activeVaultId: 'a',
+    });
+
+    const switched = setActiveVault(twoVaults, 'b');
+    expect(switched.activeVaultId).toBe('b');
+    expect(switched.notePath).toBe('D:/personal');
+    expect(switched.sourceNoteSavePath).toBe('P/src');
+  });
+
+  it('setActiveVault returns config unchanged for an unknown id', () => {
+    const cfg = ensureVaults({
+      ...getConfig(),
+      vaults: [{ id: 'a', name: 'Work', notePath: 'D:/work' }],
+      activeVaultId: 'a',
+    });
+    expect(setActiveVault(cfg, 'nope')).toEqual(cfg);
+  });
+
+  it('falls back to the first vault when activeVaultId is corrupt', () => {
+    const cfg = ensureVaults({
+      ...getConfig(),
+      vaults: [
+        { id: 'a', name: 'Work', notePath: 'D:/work' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal' },
+      ],
+      activeVaultId: 'ghost',
+    });
+    expect(cfg.activeVaultId).toBe('a');
+    expect(cfg.notePath).toBe('D:/work');
+  });
+
+  it('getActiveVault resolves id, then first, then undefined', () => {
+    const cfg = ensureVaults({
+      ...getConfig(),
+      vaults: [
+        { id: 'a', name: 'Work', notePath: 'D:/work' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal' },
+      ],
+      activeVaultId: 'b',
+    });
+    expect(getActiveVault(cfg)?.id).toBe('b');
+    expect(getActiveVault({ ...cfg, activeVaultId: 'ghost' })?.id).toBe('a');
+    expect(getActiveVault({ ...cfg, vaults: [] })).toBeUndefined();
   });
 });

@@ -34,9 +34,18 @@ export interface CardFontSizes {
   metadata: number; // tags and frontmatter values
 }
 
+export interface VaultEntry {
+  id: string;
+  name: string;
+  notePath: string;
+  sourceNoteSavePath?: string;
+}
+
 export interface Config {
   notePath: string;
   sourceNoteSavePath?: string;
+  vaults?: VaultEntry[];
+  activeVaultId?: string;
   fleetNoteTemplate: NoteTemplateConfig;
   permanentNoteTemplate: NoteTemplateConfig;
   sourceNoteTemplate: NoteTemplateConfig;
