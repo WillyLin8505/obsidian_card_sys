@@ -108,21 +108,26 @@ export function Config() {
   };
 
   const removeVault = (id: string) => {
-    setVaults((vs) => {
-      if (vs.length <= 1) return vs; // 至少保留一筆
-      const next = vs.filter((v) => v.id !== id);
-      if (id === activeVaultId) setActiveVaultId(next[0].id);
-      return next;
-    });
+    if (vaults.length <= 1) return; // 至少保留一筆
+    const next = vaults.filter((v) => v.id !== id);
+    setVaults(next);
+    if (id === activeVaultId) setActiveVaultId(next[0].id); // 刪掉 active 那筆 → 移到第一筆
   };
 
   const handleSave = async () => {
-    const activeVault = vaults.find((v) => v.id === activeVaultId) || vaults[0];
+    // Normalize each vault's source-note path (whitespace-only → undefined) so the
+    // trim actually reaches storage; saveConfig mirrors the active vault verbatim,
+    // so normalizing the entries — not just the top-level mirror — is what takes effect.
+    const normalizedVaults = vaults.map((v) => ({
+      ...v,
+      sourceNoteSavePath: v.sourceNoteSavePath?.trim() || undefined,
+    }));
+    const activeVault = normalizedVaults.find((v) => v.id === activeVaultId) || normalizedVaults[0];
     const newConfig: ConfigType = {
-      vaults,
+      vaults: normalizedVaults,
       activeVaultId: activeVault?.id,
       notePath: activeVault?.notePath || '',
-      sourceNoteSavePath: activeVault?.sourceNoteSavePath?.trim() || undefined,
+      sourceNoteSavePath: activeVault?.sourceNoteSavePath,
       fleetNoteTemplate,
       permanentNoteTemplate,
       sourceNoteTemplate,

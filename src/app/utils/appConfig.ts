@@ -95,6 +95,10 @@ function deriveVaultName(notePath: string): string {
   return base || '預設';
 }
 
+// INVARIANT: top-level `notePath`/`sourceNoteSavePath` are DERIVED MIRRORS of the
+// active vault — the ~23 existing consumers read them directly. To change paths,
+// mutate `vaults` + `activeVaultId` and let saveConfig re-mirror; writing `notePath`
+// straight through saveConfig is silently overwritten by this mirror.
 function mirrorVault(config: Config, vault: VaultEntry): Config {
   return {
     ...config,
