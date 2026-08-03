@@ -15,7 +15,7 @@
 - 向後相容：既有讀取 `getConfig().notePath` / `getConfig().sourceNoteSavePath` 的消費端不得修改。
 - `getConfig()` 對 vault 合成結果**不寫回 localStorage**（維持既有「只讀」行為；既有 `claudeApiKey` 清除邏輯不動）。
 - id 產生一律用 `crypto.randomUUID()`（與 `src/app/utils/storage.ts:147` 一致）。
-- 測試指令：`npx vitest run <path>`；型別檢查：`npx tsc --noEmit`。
+- 測試指令：`npx vitest run <path>`。本 repo **未安裝 TypeScript**（無 `tsc`），編譯驗證改用 `npx vite build`（esbuild，抓 import/export/JSX 語法錯誤，但不做完整型別檢查）；UI 執行期行為以手動瀏覽器驗證為準。
 
 ---
 
@@ -456,15 +456,16 @@ import { Config as ConfigType, DataSource, NoteTemplateConfig, MetadataField, Ca
 
 （`FolderOpen`、`BookOpen`、`Plus`、`X`、`Button`、`Input` 皆已在既有 import 中，無需新增。）
 
-- [ ] **Step 6: 型別檢查**
+- [ ] **Step 6: 編譯驗證（vite build）**
 
-Run: `npx tsc --noEmit`
-Expected: 無錯誤（已無殘留的 `notePath` / `sourceNoteSavePath` 未定義變數參照）。
+Run: `npx vite build`
+Expected: build 成功。若有殘留 import 錯誤（例如 `VaultEntry` 未從 types 匯出）或 JSX 語法錯誤會在此失敗。
+注意：本 repo 無 TypeScript，esbuild 不做完整型別檢查，也不會把「殘留的 `notePath` 未宣告識別字」當成 build 失敗（會被當全域參照）；該類問題須靠 Step 5 的仔細實作與 Step 8 手動驗證攔截——實作時務必確認已移除所有 `notePath` / `sourceNoteSavePath` 舊 state 的參照。
 
 - [ ] **Step 7: 全測試無回歸**
 
 Run: `npx vitest run`
-Expected: PASS（全部測試綠燈，含既有 ctrl-click 等使用 notePath 的測試）。
+Expected: 既有測試綠燈（含 ctrl-click 等使用 notePath 的測試）。註：`src/test/utils/appConfig.test.ts` 內有 2 個因本機 `.env.local` 造成的既存失敗（`returns defaults when config is missing`、`uses same-origin api ... backend URL is invalid`），與本變更無關，維持不變即可。
 
 - [ ] **Step 8: 手動驗證（瀏覽器）**
 

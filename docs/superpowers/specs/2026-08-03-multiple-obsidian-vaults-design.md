@@ -57,8 +57,7 @@ activeVaultId?: string;
   - 設 `activeVaultId` = 該筆 id
 - 若 `activeVaultId` 指向的 id 不存在於 `vaults`（資料損毀）：fallback 到第一筆。
 - 遷移後保證不變式成立（頂層鏡射 = active vault）。
-- **不寫回 localStorage**（getConfig 目前只讀不寫，維持既有行為）；合成結果只存在於回傳物件，Config 頁存檔時才落地。
-  - 例外：既有的 `claudeApiKey` 清除邏輯保留不動。
+- **一次性遷移寫回**：當 getConfig 從「無 vaults」合成出 vaults 時，寫回 localStorage 一次，讓 `id` / `activeVaultId` 從此穩定（避免多次 getConfig() 產生不同 uuid）。這與既有 `claudeApiKey` 清除的寫回一致，屬一次性 migration 而非 write-on-read。已含 vaults 的 config 讀取時不寫回。
 
 ### 新增 Helpers
 ```ts
@@ -69,7 +68,8 @@ setActiveVault(config: Config, id: string): Config   // 回傳新 config，頂�
 - `setActiveVault`：找到 id 對應的 vault，設 `activeVaultId`，並把該 vault 的 `notePath` / `sourceNoteSavePath` 寫回頂層欄位。找不到 id 時回傳原 config 不變。
 
 ### saveConfig() 前置
-- 存檔前確保頂層 `notePath` / `sourceNoteSavePath` = active vault 的路徑（防止 UI 疏漏造成不一致）。實作上由 Config 頁在組 config 物件時保證，並可在 `saveConfig` 內做一次防禦性同步。
+- 存檔前確保頂層 `notePath` / `sourceNoteSavePath` = active vault 的路徑（防止 UI 疏漏造成不一致）。實作上由 Config 頁在組 config 物件時保證，並在 `saveConfig` 內做防禦性同步。
+- **保護既存 vaults**：若傳入的 config **未帶 `vaults` key**（呼叫端沒動 vaults，例如只改其他欄位），`saveConfig` 保留 localStorage 既有的 vaults 而非覆寫成空；若 config **帶有 `vaults`**（即使空陣列），以傳入者為準寫入（讓刪除 vault 能正常落地）。
 
 ---
 
