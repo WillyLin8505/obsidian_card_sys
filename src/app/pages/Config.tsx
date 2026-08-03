@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { storage } from '../utils/storage';
 import { api, localApi } from '../utils/api';
-import { Config as ConfigType, DataSource, NoteTemplateConfig, MetadataField, CardFontSizes } from '../types/note';
+import { Config as ConfigType, DataSource, NoteTemplateConfig, MetadataField, CardFontSizes, VaultEntry } from '../types/note';
 import { parseFrontmatterKeys } from '../utils/frontmatter';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -15,8 +15,8 @@ import { useNavigate } from 'react-router';
 
 export function Config() {
   const [config, setConfig] = useState<ConfigType>(storage.getConfig());
-  const [notePath, setNotePath] = useState(config.notePath);
-  const [sourceNoteSavePath, setSourceNoteSavePath] = useState(config.sourceNoteSavePath || '');
+  const [vaults, setVaults] = useState<VaultEntry[]>(config.vaults || []);
+  const [activeVaultId, setActiveVaultId] = useState<string>(config.activeVaultId || '');
   const [fleetNoteTemplate, setFleetNoteTemplate] = useState<NoteTemplateConfig>(config.fleetNoteTemplate);
   const [permanentNoteTemplate, setPermanentNoteTemplate] = useState<NoteTemplateConfig>(config.permanentNoteTemplate);
   const [sourceNoteTemplate, setSourceNoteTemplate] = useState<NoteTemplateConfig>(config.sourceNoteTemplate);
@@ -40,8 +40,8 @@ export function Config() {
   const [cardFontSizes, setCardFontSizes] = useState<CardFontSizes>({ ...DEFAULT_CARD_FONT_SIZES, ...(config.cardFontSizes || {}) });
 
   useEffect(() => {
-    setNotePath(config.notePath);
-    setSourceNoteSavePath(config.sourceNoteSavePath || '');
+    setVaults(config.vaults || []);
+    setActiveVaultId(config.activeVaultId || '');
     setFleetNoteTemplate(config.fleetNoteTemplate);
     setPermanentNoteTemplate(config.permanentNoteTemplate);
     setSourceNoteTemplate(config.sourceNoteTemplate);
@@ -97,10 +97,32 @@ export function Config() {
     }
   };
 
+  const updateVault = (id: string, patch: Partial<VaultEntry>) => {
+    setVaults((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  };
+
+  const addVault = () => {
+    const nv: VaultEntry = { id: crypto.randomUUID(), name: '', notePath: '', sourceNoteSavePath: '' };
+    setVaults((vs) => [...vs, nv]);
+    if (!activeVaultId) setActiveVaultId(nv.id);
+  };
+
+  const removeVault = (id: string) => {
+    setVaults((vs) => {
+      if (vs.length <= 1) return vs; // 至少保留一筆
+      const next = vs.filter((v) => v.id !== id);
+      if (id === activeVaultId) setActiveVaultId(next[0].id);
+      return next;
+    });
+  };
+
   const handleSave = async () => {
+    const activeVault = vaults.find((v) => v.id === activeVaultId) || vaults[0];
     const newConfig: ConfigType = {
-      notePath,
-      sourceNoteSavePath: sourceNoteSavePath.trim() || undefined,
+      vaults,
+      activeVaultId: activeVault?.id,
+      notePath: activeVault?.notePath || '',
+      sourceNoteSavePath: activeVault?.sourceNoteSavePath?.trim() || undefined,
       fleetNoteTemplate,
       permanentNoteTemplate,
       sourceNoteTemplate,
@@ -288,41 +310,82 @@ export function Config() {
         <div className="bg-white border rounded-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <FolderOpen className="size-5 text-gray-600" />
-            <h2>筆記路徑</h2>
+            <h2>筆記路徑（Vault 清單）</h2>
           </div>
+          <p className="text-sm text-gray-600 mb-4">
+            管理多個 {dataSource === 'obsidian' ? 'Obsidian Vault' : '筆記'} 路徑，選一個為使用中。一次只用一個。
+          </p>
 
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm mb-2">
-                {dataSource === 'obsidian' ? 'Obsidian Vault 路徑' : '筆記儲存路徑'}
-              </label>
-              <Input
-                value={notePath}
-                onChange={(e) => setNotePath(e.target.value)}
-                placeholder={dataSource === 'obsidian' ? '例如: /home/user/obsidian-vault 或 D:\\obsidian\\vault' : '例如: ~/Documents/Notes'}
-              />
-              <p className="text-sm text-gray-500 mt-2">
-                {dataSource === 'obsidian'
-                  ? <span>你的 Obsidian Vault 所在位置。語意搜尋由 local-server 自動連接 llama-search。</span>
-                  : '設定您的 Markdown 檔案儲存位置'
-                }
-              </p>
-            </div>
+            {vaults.map((v) => (
+              <div
+                key={v.id}
+                className={`border rounded-lg p-4 space-y-3 ${v.id === activeVaultId ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}
+              >
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input
+                      type="radio"
+                      name="active-vault"
+                      checked={v.id === activeVaultId}
+                      onChange={() => setActiveVaultId(v.id)}
+                    />
+                    使用中
+                  </label>
+                  <button
+                    type="button"
+                    className="text-gray-400 hover:text-red-600 disabled:opacity-30 disabled:hover:text-gray-400"
+                    onClick={() => removeVault(v.id)}
+                    disabled={vaults.length <= 1}
+                    aria-label="刪除此 Vault"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2 flex items-center gap-1">
-                <BookOpen className="size-4 text-green-600" />
-                文獻筆記存檔路徑
-              </label>
-              <Input
-                value={sourceNoteSavePath}
-                onChange={(e) => setSourceNoteSavePath(e.target.value)}
-                placeholder="例如: D:\obsidian\Willy_2026\Sources\others"
-              />
-              <p className="text-sm text-gray-500 mt-2">
-                抓取網址建立的文獻筆記，會同步儲存為 .md 檔案到此路徑。Obsidian 模式可填 Vault 內的絕對路徑或相對子資料夾；留空則存到 Vault 根目錄。
-              </p>
-            </div>
+                <div>
+                  <label className="block text-sm mb-1">名稱</label>
+                  <Input
+                    value={v.name}
+                    onChange={(e) => updateVault(v.id, { name: e.target.value })}
+                    placeholder="例如: 工作 / 個人 / 專案"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm mb-1">
+                    {dataSource === 'obsidian' ? 'Obsidian Vault 路徑' : '筆記儲存路徑'}
+                  </label>
+                  <Input
+                    value={v.notePath}
+                    onChange={(e) => updateVault(v.id, { notePath: e.target.value })}
+                    placeholder={dataSource === 'obsidian' ? '例如: /home/user/obsidian-vault 或 D:\\obsidian\\vault' : '例如: ~/Documents/Notes'}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm mb-1 flex items-center gap-1">
+                    <BookOpen className="size-4 text-green-600" />
+                    文獻筆記存檔路徑
+                  </label>
+                  <Input
+                    value={v.sourceNoteSavePath || ''}
+                    onChange={(e) => updateVault(v.id, { sourceNoteSavePath: e.target.value })}
+                    placeholder="例如: D:\obsidian\Willy_2026\Sources\others"
+                  />
+                </div>
+              </div>
+            ))}
+
+            <Button variant="outline" onClick={addVault}>
+              <Plus className="size-4 mr-1" /> 新增 Vault
+            </Button>
+
+            <p className="text-sm text-gray-500">
+              {dataSource === 'obsidian'
+                ? '使用中的 Vault 路徑會套用到全 App。語意搜尋由 local-server 自動連接 llama-search。文獻筆記路徑留空則存到 Vault 根目錄。'
+                : '設定您的 Markdown 檔案儲存位置。'}
+            </p>
           </div>
         </div>
 
