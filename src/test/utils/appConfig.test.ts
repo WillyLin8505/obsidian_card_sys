@@ -142,4 +142,58 @@ describe('app config', () => {
     expect(getActiveVault({ ...cfg, activeVaultId: 'ghost' })?.id).toBe('a');
     expect(getActiveVault({ ...cfg, vaults: [] })).toBeUndefined();
   });
+
+  it('getConfig returns a stable activeVaultId and vault id across repeated calls with no saved config', () => {
+    const first = getConfig();
+    const second = getConfig();
+    expect(second.activeVaultId).toBe(first.activeVaultId);
+    expect(second.vaults?.[0].id).toBe(first.vaults?.[0].id);
+  });
+
+  it('getConfig migrates a legacy config without vaults with a stable id and writes back once', () => {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify({ dataSource: 'obsidian', notePath: 'D:/x/Legacy' }));
+
+    const first = getConfig();
+    const second = getConfig();
+    expect(second.activeVaultId).toBe(first.activeVaultId);
+
+    const persisted = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
+    expect(Array.isArray(persisted.vaults)).toBe(true);
+  });
+
+  it('saveConfig preserves persisted vaults when the vaults key is omitted', () => {
+    const seeded = ensureVaults({
+      ...getConfig(),
+      vaults: [
+        { id: 'a', name: 'Work', notePath: 'D:/work' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal' },
+      ],
+      activeVaultId: 'a',
+    });
+    saveConfig(seeded);
+
+    // Mimic Config.tsx handleSave: a fresh object literal without vaults/activeVaultId.
+    const { vaults: _vaults, activeVaultId: _activeVaultId, ...rest } = seeded;
+    saveConfig({ ...rest } as typeof seeded);
+
+    const config = getConfig();
+    expect(config.vaults).toHaveLength(2);
+  });
+
+  it('saveConfig persists an explicit smaller vaults array (deletion works)', () => {
+    const seeded = ensureVaults({
+      ...getConfig(),
+      vaults: [
+        { id: 'a', name: 'Work', notePath: 'D:/work' },
+        { id: 'b', name: 'Personal', notePath: 'D:/personal' },
+      ],
+      activeVaultId: 'a',
+    });
+    saveConfig(seeded);
+
+    saveConfig({ ...seeded, vaults: [{ id: 'a', name: 'Work', notePath: 'D:/work' }] });
+
+    const config = getConfig();
+    expect(config.vaults).toHaveLength(1);
+  });
 });

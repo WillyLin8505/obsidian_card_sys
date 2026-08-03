@@ -95,6 +95,15 @@ function deriveVaultName(notePath: string): string {
   return base || '預設';
 }
 
+function mirrorVault(config: Config, vault: VaultEntry): Config {
+  return {
+    ...config,
+    activeVaultId: vault.id,
+    notePath: vault.notePath || '',
+    sourceNoteSavePath: vault.sourceNoteSavePath,
+  };
+}
+
 export function ensureVaults(config: Config): Config {
   let vaults: VaultEntry[] = Array.isArray(config.vaults) ? config.vaults : [];
   if (vaults.length === 0) {
@@ -107,13 +116,7 @@ export function ensureVaults(config: Config): Config {
   }
   let active = vaults.find((v) => v.id === config.activeVaultId);
   if (!active) active = vaults[0];
-  return {
-    ...config,
-    vaults,
-    activeVaultId: active.id,
-    notePath: active.notePath || '',
-    sourceNoteSavePath: active.sourceNoteSavePath,
-  };
+  return mirrorVault({ ...config, vaults }, active);
 }
 
 export function getActiveVault(config: Config): VaultEntry | undefined {
@@ -125,22 +128,23 @@ export function getActiveVault(config: Config): VaultEntry | undefined {
 export function setActiveVault(config: Config, id: string): Config {
   const target = (config.vaults || []).find((v) => v.id === id);
   if (!target) return config;
-  return {
-    ...config,
-    activeVaultId: id,
-    notePath: target.notePath || '',
-    sourceNoteSavePath: target.sourceNoteSavePath,
-  };
+  return mirrorVault(config, target);
 }
 
 export function getConfig(): Config {
   const raw = localStorage.getItem(CONFIG_KEY);
-  if (!raw) return ensureVaults({ ...DEFAULT_CONFIG });
+  if (!raw) {
+    const result = ensureVaults({ ...DEFAULT_CONFIG });
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(result));
+    return result;
+  }
   const saved = JSON.parse(raw) as Record<string, unknown>;
+  let needsWriteBack = false;
   if ('claudeApiKey' in saved) {
     delete saved.claudeApiKey;
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(saved));
+    needsWriteBack = true;
   }
+  const hadVaults = Array.isArray(saved.vaults) && saved.vaults.length > 0;
   const merged: Config = {
     ...DEFAULT_CONFIG,
     ...(saved as Partial<Config>),
@@ -149,14 +153,31 @@ export function getConfig(): Config {
     permanentNoteTemplate: migrateTemplate(saved.permanentNoteTemplate ?? DEFAULT_CONFIG.permanentNoteTemplate),
     sourceNoteTemplate: migrateTemplate(saved.sourceNoteTemplate ?? DEFAULT_CONFIG.sourceNoteTemplate),
   };
-  return ensureVaults(merged);
+  const result = ensureVaults(merged);
+  if (!hadVaults) needsWriteBack = true;
+  if (needsWriteBack) {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(result));
+  }
+  return result;
 }
 
 export function saveConfig(config: Config): void {
-  const active = getActiveVault(config);
-  const synced: Config = active
-    ? { ...config, activeVaultId: active.id, notePath: active.notePath || '', sourceNoteSavePath: active.sourceNoteSavePath }
-    : config;
+  let base: Config = config;
+  if (config.vaults === undefined) {
+    try {
+      const raw = localStorage.getItem(CONFIG_KEY);
+      if (raw) {
+        const existing = JSON.parse(raw) as Partial<Config>;
+        if (existing.vaults !== undefined) {
+          base = { ...config, vaults: existing.vaults };
+        }
+      }
+    } catch {
+      // ignore parse errors, fall through to writing as given
+    }
+  }
+  const active = getActiveVault(base);
+  const synced: Config = active ? mirrorVault(base, active) : base;
   localStorage.setItem(CONFIG_KEY, JSON.stringify(synced));
 }
 
